@@ -1,0 +1,120 @@
+# APISIX 核心配置文件
+# 配置 etcd 连接、插件、Admin API 等
+
+apisix:
+  # 节点监听配置
+  node_listen: 9080
+  ssl:
+    enable: false
+    listen_port: 9443
+  
+  # Admin API 配置
+  admin_key:
+    - name: admin
+      key: dv-agent-admin-key-2024  # 生产环境请使用强密钥
+      role: admin
+    - name: viewer
+      key: dv-agent-viewer-key-2024
+      role: viewer
+  
+  # 启用 status 端点用于健康检查
+  enable_admin: true
+  
+  # 控制面板
+  enable_control: true
+  control:
+    ip: "0.0.0.0"
+    port: 9090
+  
+  # 路由匹配模式
+  router:
+    http: radixtree_host_uri
+    ssl: radixtree_sni
+
+# etcd 配置
+etcd:
+  host:
+    - "http://etcd:2379"
+  prefix: "/apisix"
+  timeout: 30
+
+# 插件配置
+plugins:
+  # 认证插件
+  - jwt-auth
+  - key-auth
+  - basic-auth
+  
+  # 流量控制插件
+  - limit-req
+  - limit-conn
+  - limit-count
+  
+  # 安全插件
+  - cors
+  - ip-restriction
+  - ua-restriction
+  - referer-restriction
+  
+  # 转换插件
+  - request-id
+  - response-rewrite
+  - proxy-rewrite
+  
+  # 缓存插件
+  - proxy-cache
+  
+  # 日志插件
+  - http-logger
+  - file-logger
+  
+  # 可观测性
+  - prometheus
+  - zipkin
+  
+  # 其他
+  - redirect
+  - echo
+  - serverless-pre-function
+  - serverless-post-function
+
+# 插件属性配置
+plugin_attr:
+  # Prometheus 指标配置
+  prometheus:
+    export_uri: /apisix/prometheus/metrics
+    export_addr:
+      ip: "0.0.0.0"
+      port: 9091
+    metric_prefix: apisix_
+  
+  # 日志格式
+  log-format:
+    host: "$host"
+    client_ip: "$remote_addr"
+    "@timestamp": "$time_iso8601"
+    request:
+      method: "$request_method"
+      uri: "$request_uri"
+      query_string: "$query_string"
+      size: "$request_length"
+    response:
+      status: "$status"
+      size: "$body_bytes_sent"
+      time: "$request_time"
+    upstream:
+      addr: "$upstream_addr"
+      status: "$upstream_status"
+      time: "$upstream_response_time"
+  
+  # 请求 ID 配置
+  request-id:
+    header_name: X-Request-ID
+    include_in_response: true
+
+# 静态路由配置（声明式）
+# 可通过 apisix.yaml 文件配置路由规则
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: yaml

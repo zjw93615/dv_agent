@@ -1,0 +1,73 @@
+# MCP (Model Context Protocol) Server Configuration
+# 配置外部MCP工具服务器
+
+# 是否启用MCP集成
+enabled: true
+
+# 启动时连接行为
+startup:
+  connect_on_start: true  # 启动时自动连接
+  fail_on_error: false    # 连接失败是否阻止启动
+  retry_interval: 30      # 重连间隔（秒）
+
+# MCP Servers配置
+servers:
+  ui-test-core:
+    name: UI Test Core
+    description: 窗口控制和UI自动化测试工具
+    # 连接方式：stdio | http | websocket
+    transport: stdio
+    command: python
+    args:
+      - "-m"
+      - "ui_test_core.server"
+    env:
+      PYTHONPATH: "${PROJECT_ROOT}"
+    # 健康检查
+    health_check:
+      enabled: true
+      interval: 60
+    # 可用工具（自动发现，这里可以手动指定子集）
+    tools:
+      - list_windows
+      - find_window
+      - activate_window
+      - click
+      - type_text
+      - press_key
+      - hotkey
+      - scroll
+      - analyze_screenshot
+      
+  deepwiki:
+    name: DeepWiki
+    description: GitHub仓库文档查询工具
+    transport: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@anthropic/deepwiki-mcp"
+    health_check:
+      enabled: true
+      interval: 60
+    tools:
+      - read_wiki_structure
+      - read_wiki_contents
+      - ask_question
+
+# 工具命名规则
+tool_naming:
+  # MCP工具名称格式: {server_name}/{tool_name}
+  prefix_with_server: true
+  separator: "/"
+
+# 超时配置
+timeout:
+  connect: 10       # 连接超时（秒）
+  invoke: 30        # 调用超时（秒）
+  health_check: 5   # 健康检查超时（秒）
+
+# 重试配置
+retry:
+  max_retries: 2
+  base_delay: 1.0

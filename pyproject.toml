@@ -1,0 +1,140 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dv-agent"
+version = "0.1.0"
+description = "通用AI Agent核心决策层 - 支持多Agent协作、LLM统一接入、ReAct决策循环"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "dv-agent team" }
+]
+keywords = ["ai", "agent", "llm", "langchain", "langgraph", "a2a"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    # LLM Framework
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-community>=0.3.0",
+    "langgraph>=0.2.0",
+    
+    # HTTP & Async
+    "httpx>=0.27.0",
+    "aiohttp>=3.9.0",
+    
+    # Data Validation
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    
+    # Redis
+    "redis>=5.0.0",
+    
+    # Web Framework
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "sse-starlette>=2.0.0",
+    
+    # CLI
+    "click>=8.1.0",
+    
+    # Config
+    "pyyaml>=6.0",
+    
+    # Utilities
+    "tiktoken>=0.5.0",
+    "tenacity>=8.2.0",
+    
+    # Logging
+    "structlog>=24.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
+
+ollama = [
+    "ollama>=0.1.0",
+]
+
+mcp = [
+    "mcp>=1.0.0",
+]
+
+embedding = [
+    "sentence-transformers>=2.5.0",
+    "chromadb>=0.4.0",
+]
+
+all = [
+    "dv-agent[dev,ollama,mcp,embedding]",
+]
+
+[project.urls]
+Homepage = "https://github.com/dv-agent/dv-agent"
+Documentation = "https://github.com/dv-agent/dv-agent#readme"
+Repository = "https://github.com/dv-agent/dv-agent"
+Issues = "https://github.com/dv-agent/dv-agent/issues"
+
+[project.scripts]
+dv-agent = "dv_agent.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dv_agent"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dv_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

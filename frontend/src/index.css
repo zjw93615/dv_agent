@@ -1,0 +1,158 @@
+:root {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-slate-900 text-slate-100 antialiased;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  @apply bg-slate-700 text-slate-100;
+  cursor: pointer;
+  transition: background-color 0.25s, border-color 0.25s;
+}
+
+button:hover {
+  @apply bg-slate-600;
+}
+
+button:focus,
+button:focus-visible {
+  @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-slate-900;
+}
+
+pre code {
+  @apply block p-4 rounded-lg bg-slate-800 overflow-x-auto text-sm;
+}
+
+code {
+  @apply px-1.5 py-0.5 rounded bg-slate-800 text-sm font-mono;
+}
+
+.message-enter {
+  @apply animate-slide-up;
+}
+
+.loading-dots span {
+  animation: dots 1.4s infinite ease-in-out both;
+}
+
+.loading-dots span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.loading-dots span:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes dots {
+  0%, 80%, 100% {
+    transform: scale(0);
+  }
+  40% {
+    transform: scale(1);
+  }
+}
+
+/* Force dark mode - ignore system preference */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+/* Custom prose styles for chat messages */
+.prose h1 {
+  @apply text-xl font-bold mt-4 mb-2;
+}
+
+.prose h2 {
+  @apply text-lg font-semibold mt-3 mb-2;
+}
+
+.prose h3 {
+  @apply text-base font-semibold mt-2 mb-1;
+}
+
+.prose h4,
+.prose h5,
+.prose h6 {
+  @apply text-sm font-medium mt-2 mb-1;
+}
+
+.prose p {
+  @apply my-1.5 leading-relaxed;
+}
+
+.prose ul,
+.prose ol {
+  @apply my-2 pl-5;
+}
+
+.prose li {
+  @apply my-0.5;
+}
+
+.prose blockquote {
+  @apply border-l-4 border-slate-500 pl-4 my-2 italic text-slate-300;
+}
+
+.prose hr {
+  @apply my-4 border-slate-600;
+}
+
+.prose strong {
+  @apply font-semibold text-white;
+}
+
+.prose em {
+  @apply italic;
+}
+
+/* Compact prose variant for chat */
+.prose-sm h1 {
+  @apply text-lg font-bold;
+}
+
+.prose-sm h2 {
+  @apply text-base font-semibold;
+}
+
+.prose-sm h3 {
+  @apply text-sm font-semibold;
+}
+
+.prose-sm p {
+  @apply my-1 text-sm leading-relaxed;
+}
+
+.prose-sm ul,
+.prose-sm ol {
+  @apply my-1 pl-4 text-sm;
+}
+
+.prose-sm li {
+  @apply my-0.5;
+}
+
+.prose-sm code {
+  @apply text-xs;
+}

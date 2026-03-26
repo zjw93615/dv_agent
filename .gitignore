@@ -1,0 +1,418 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+.pdm-python
+.pdm-build/
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+logs/
+.cache/
+
+# Redis dump
+dump.rdb
+
+# Local configuration
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Test artifacts
+.coverage
+htmlcov/
+
+# ==================== DV-Agent Specific ====================
+
+# Environment files (keep examples)
+.env
+!.env.example
+!.env.production.example
+
+# Docker volumes data (if mounted locally)
+data/
+postgres_data/
+redis_data/
+milvus_data/
+minio_data/
+etcd_data/
+
+# ML Models (large files - download separately)
+models/
+*.bin
+*.onnx
+*.safetensors
+*.gguf
+*.pt
+*.pth
+!models/.gitkeep
+
+# Embeddings cache
+embeddings_cache/
+.embeddings/
+
+# Uploaded documents (user data)
+uploads/
+documents/
+storage/
+
+# MinIO local data
+.minio/
+
+# SSL certificates (security)
+deploy/ssl/*.pem
+deploy/ssl/*.key
+deploy/ssl/*.crt
+*.pem
+*.key
+*.crt
+!deploy/ssl/.gitkeep
+
+# Secrets
+secrets/
+*.secret
+*.secrets
+api_keys.txt
+credentials.json
+
+# ==================== Frontend ====================
+
+# Node modules
+frontend/node_modules/
+node_modules/
+
+# Build output
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/out/
+
+# Frontend environment (all env files except examples)
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+frontend/.env.development
+frontend/.env.*.local
+!frontend/.env.example
+!frontend/.env.production.example
+
+# Frontend cache
+frontend/.cache/
+frontend/.parcel-cache/
+frontend/.turbo/
+
+# TypeScript
+frontend/*.tsbuildinfo
+*.tsbuildinfo
+
+# Vite
+frontend/.vite/
+
+# Testing
+frontend/coverage/
+
+# ==================== Docker ====================
+
+# Docker compose override (local customization)
+docker-compose.override.yml
+docker-compose.local.yml
+
+# ==================== Logs and Debug ====================
+
+# Application logs
+*.log
+logs/
+log/
+*.log.*
+
+# Debug files
+*.debug
+debug/
+
+# Profiling
+*.prof
+profiling/
+
+# ==================== Database ====================
+
+# SQLite
+*.sqlite
+*.sqlite3
+*.db
+
+# PostgreSQL
+*.sql.bak
+pg_dump_*
+
+# ==================== Temporary Files ====================
+
+# Temp files
+tmp/
+temp/
+*.tmp
+*.temp
+*.swp
+*.bak
+*.backup
+*~
+
+# Cache directories
+.cache/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==================== IDE and Editor ====================
+
+# VSCode
+.vscode/
+!.vscode/settings.json.example
+!.vscode/extensions.json
+
+# JetBrains (PyCharm, WebStorm, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# ==================== OS Generated ====================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ==================== Misc ====================
+
+# Archives (don't commit large archives)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+*.ipynb
+
+# Keep certain directories
+!.gitkeep
+
+# ==================== Package Lock Files ====================
+# Keep package-lock.json for reproducible builds
+# but ignore yarn.lock and pnpm-lock if not used
+yarn.lock
+pnpm-lock.yaml
+
+# ==================== Compiled/Generated ====================
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# ==================== Test Coverage ====================
+.nyc_output/
+coverage/
+*.lcov
+
+# ==================== Misc Cache ====================
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+.turbo
+
+# ==================== Docker Data (local development) ====================
+.docker-data/
+docker-data/
+
+# ==================== API Keys and Sensitive Files ====================
+**/secrets/
+**/credentials/
+**/*.credentials
+**/service-account*.json
+
+# ==================== Documentation Build ====================
+docs/_build/
+docs/site/
+site/

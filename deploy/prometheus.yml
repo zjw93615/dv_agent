@@ -1,0 +1,43 @@
+# Prometheus Configuration for DV-Agent Monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'dv-agent-monitor'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Rule files (optional)
+# rule_files:
+#   - "first_rules.yml"
+#   - "second_rules.yml"
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # DV-Agent application metrics
+  - job_name: 'dv-agent'
+    static_configs:
+      - targets: ['dv-agent:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Redis metrics (if using redis-exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 10s
+
+  # Node metrics (if using node-exporter)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']

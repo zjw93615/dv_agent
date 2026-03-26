@@ -1,0 +1,158 @@
+# RAG (Retrieval-Augmented Generation) Configuration
+# 文档检索增强生成配置
+
+# ==================== Document Pipeline ====================
+pipeline:
+  # Supported file formats
+  supported_formats:
+    - pdf
+    - docx
+    - xlsx
+    - pptx
+    - html
+    - md
+    - txt
+
+  # Text chunking configuration
+  chunking:
+    chunk_size: 500           # Characters per chunk
+    chunk_overlap: 50         # Overlap between chunks
+    min_chunk_size: 20        # Minimum chunk size (discard if smaller)
+    separators:
+      - "\n\n"                # Paragraph boundary (highest priority)
+      - "\n"                  # Line break
+      - "。"                  # Chinese period
+      - "."                   # English period
+      - "！"
+      - "?"
+      - "；"
+      - ";"
+      - "，"
+      - ","
+      - " "                   # Space (lowest priority)
+
+  # Text cleaning configuration
+  cleaning:
+    remove_headers_footers: true
+    normalize_whitespace: true
+    min_text_length: 20
+    # Patterns to remove (regex)
+    noise_patterns:
+      - '第\s*\d+\s*页.*?共\s*\d+\s*页'
+      - 'Page\s*\d+\s*of\s*\d+'
+
+  # OCR configuration (for scanned PDFs)
+  ocr:
+    enabled: true
+    languages:
+      - chi_sim              # Simplified Chinese
+      - eng                  # English
+
+# ==================== Embedding Service ====================
+embedding:
+  # Model configuration
+  model:
+    name: "BAAI/bge-m3"
+    dimension: 1024
+    use_fp16: true           # Half precision for GPU
+
+  # Sparse vector configuration
+  sparse:
+    enabled: true
+    min_weight: 0.01         # Filter tokens below this weight
+    max_features: 128        # Keep top-K features (0 = unlimited)
+
+  # Caching configuration
+  cache:
+    enabled: true
+    ttl: 604800              # 7 days in seconds
+    prefix: "rag:emb"
+
+  # Batch processing
+  batch_size: 32
+
+# ==================== Document Store ====================
+store:
+  # MinIO/S3 configuration
+  minio:
+    endpoint: "${MINIO_ENDPOINT:localhost:9000}"
+    access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+    secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+    bucket: "dv-agent-documents"
+    secure: false
+
+  # PostgreSQL document tables
+  postgres:
+    # Uses same connection as memory system
+    documents_table: "documents"
+    chunks_table: "document_chunks"
+
+  # Milvus collections
+  milvus:
+    # Uses same connection as memory system
+    dense_collection: "doc_embeddings"
+    sparse_collection: "doc_sparse_embeddings"
+    index_type: "HNSW"
+    index_params:
+      M: 16
+      efConstruction: 256
+    search_params:
+      ef: 64
+
+  # Tenant configuration
+  tenant:
+    isolation: true          # Enable tenant isolation
+    default_quota_mb: 1024   # Default storage quota per tenant
+
+# ==================== Retrieval ====================
+retrieval:
+  # RAG-Fusion configuration
+  fusion:
+    enabled: true
+    num_query_variants: 4    # Number of query variants to generate
+    query_timeout: 3.0       # Timeout for query generation (seconds)
+
+  # Search configuration
+  search:
+    dense_top_k: 20          # Dense vector search results
+    sparse_top_k: 20         # Sparse vector search results
+    bm25_top_k: 20           # BM25 search results
+    final_top_k: 10          # Results after RRF fusion
+
+  # RRF (Reciprocal Rank Fusion) configuration
+  rrf:
+    k: 60                    # RRF constant
+
+  # Reranker configuration
+  reranker:
+    enabled: true
+    model: "BAAI/bge-reranker-v2-m3"
+    top_k: 5                 # Final results after reranking
+    batch_size: 16
+
+  # Caching configuration
+  cache:
+    enabled: true
+    ttl: 300                 # 5 minutes in seconds
+    prefix: "rag:search"
+
+  # Performance targets
+  performance:
+    max_latency_ms: 500      # Target p99 latency
+    min_qps: 50              # Target throughput
+
+# ==================== Async Processing ====================
+async_processing:
+  # Task queue configuration
+  enabled: true
+  max_workers: 4
+  
+  # Large document threshold
+  large_document:
+    max_size_mb: 10          # Async if larger than this
+    max_pages: 50            # Async if more pages than this
+
+  # Retry configuration
+  retry:
+    max_attempts: 3
+    backoff_seconds: 5

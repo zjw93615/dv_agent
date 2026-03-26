@@ -1,0 +1,60 @@
+# Docker Compose for APISIX API Gateway
+# Use this with: docker-compose -f docker-compose.yml -f deploy/docker-compose.apisix.yaml up -d
+
+version: "3.8"
+
+# APISIX API Gateway + etcd Docker Compose 配置
+# 用于 DV-Agent 的 API 网关层
+
+services:
+  # etcd - APISIX 配置存储
+  etcd:
+    image: bitnami/etcd:3.5
+    container_name: dv-agent-etcd
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+    volumes:
+      - etcd_data:/bitnami/etcd
+    networks:
+      - dv-agent-network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # APISIX - API 网关
+  apisix:
+    image: apache/apisix:3.8.0-debian
+    container_name: dv-agent-apisix
+    depends_on:
+      etcd:
+        condition: service_healthy
+    ports:
+      - "9080:9080"    # HTTP 入口
+      - "9443:9443"    # HTTPS 入口
+      - "9180:9180"    # Admin API
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - dv-agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9080/apisix/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  etcd_data:
+    driver: local
+
+networks:
+  dv-agent-network:
+    external: true

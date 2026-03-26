@@ -1,0 +1,85 @@
+# Agent Configuration
+# 配置Orchestrator和Worker Agents
+
+# Orchestrator Agent配置
+orchestrator:
+  id: orchestrator-v1
+  name: Orchestrator Agent
+  description: 主控Agent，负责任务分解、Agent调度、结果聚合
+  
+  # ReAct循环配置
+  react:
+    max_iterations: 10
+    similarity_threshold: 0.9  # 循环检测阈值
+    consecutive_similar_count: 3  # 连续相似次数触发中断
+  
+  # 任务分解配置
+  task_decomposition:
+    enabled: true
+    max_subtasks: 5
+  
+  # 超时配置
+  timeout:
+    default: 30  # 秒
+    max: 120
+
+# Worker Agents配置
+workers:
+  qa-agent:
+    id: qa-agent-v1
+    name: Q&A Agent
+    description: 通用问答Agent，处理简单问答和FAQ查询
+    endpoint: http://localhost:8081
+    capabilities:
+      - name: general_qa
+        description: 通用问答
+        estimated_latency_ms: 500
+    allowed_tools: []  # 无需工具
+    
+  knowledge-agent:
+    id: knowledge-agent-v1
+    name: Knowledge Agent
+    description: 知识检索Agent，处理RAG查询和文档分析
+    endpoint: http://localhost:8082
+    capabilities:
+      - name: rag_query
+        description: RAG知识库查询
+        estimated_latency_ms: 1000
+      - name: doc_analyze
+        description: 文档分析
+        estimated_latency_ms: 2000
+    allowed_tools:
+      - deepwiki/read_wiki_contents
+      - deepwiki/ask_question
+      
+  search-agent:
+    id: search-agent-v1
+    name: Search Agent
+    description: 网页搜索Agent，处理网页搜索和信息聚合
+    endpoint: http://localhost:8083
+    capabilities:
+      - name: web_search
+        description: 网页搜索
+        estimated_latency_ms: 3000
+      - name: summarize
+        description: 内容总结
+        estimated_latency_ms: 1500
+    allowed_tools:
+      - web_search  # 内置skill
+
+# Intent到Agent的映射
+intent_agent_mapping:
+  general_qa: qa-agent
+  knowledge_query: knowledge-agent
+  web_search: search-agent
+  code_gen: qa-agent  # 暂时用QA处理
+  code_explain: knowledge-agent
+  task_plan: orchestrator  # Orchestrator自己处理
+  unknown: qa-agent  # 默认fallback
+
+# A2A协议配置
+a2a:
+  protocol_version: "dv-agent-a2a/1.0"
+  timeout_ms: 30000
+  retry_on_failure: true
+  max_retries: 2

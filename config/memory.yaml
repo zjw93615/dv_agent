@@ -1,0 +1,128 @@
+# Memory System Configuration
+# AI Agent 记忆系统配置
+
+# 短期记忆配置
+short_term:
+  # 滑动窗口大小（保留最近N条消息）
+  window_size: 20
+  # Token上限（超出触发压缩）
+  token_limit: 4000
+  # 摘要最大Token数
+  max_summary_tokens: 1000
+  # 压缩使用的LLM模型
+  compress_model: "gpt-4o-mini"
+  # 触发压缩的消息数阈值
+  compress_threshold: 30
+
+# 长期记忆配置
+long_term:
+  # PostgreSQL 连接配置
+  postgres:
+    host: "${POSTGRES_HOST:localhost}"
+    port: "${POSTGRES_PORT:5432}"
+    database: "${POSTGRES_DB:dv_agent}"
+    user: "${POSTGRES_USER:postgres}"
+    password: "${POSTGRES_PASSWORD:}"
+    pool_size: 5
+    max_overflow: 10
+  
+  # Milvus 连接配置
+  milvus:
+    host: "${MILVUS_HOST:localhost}"
+    port: "${MILVUS_PORT:19530}"
+    user: "${MILVUS_USER:}"
+    password: "${MILVUS_PASSWORD:}"
+    # Collection配置
+    user_memory_collection: "user_memory_vectors"
+    enterprise_collection: "enterprise_knowledge"
+    # 索引配置
+    index_type: "IVF_FLAT"
+    nlist: 1024
+    metric_type: "COSINE"
+
+# Embedding配置
+embedding:
+  # 模型名称（sentence-transformers）
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  # 向量维度
+  dimension: 384
+  # 批处理大小
+  batch_size: 32
+  # 缓存TTL（秒）
+  cache_ttl: 86400
+  # 设备（cpu/cuda）
+  device: "cpu"
+
+# 检索配置
+retrieval:
+  # 向量检索返回数量
+  vector_top_k: 20
+  # 关键词检索返回数量
+  keyword_top_k: 10
+  # 时序检索返回数量
+  recency_top_k: 5
+  # 时序检索时间窗口（天）
+  recency_days: 7
+  # 最终返回数量
+  final_top_k: 10
+  # 是否启用重排序
+  enable_rerank: true
+  # 重排序候选数量上限
+  max_rerank_candidates: 30
+  # Cross-Encoder模型
+  rerank_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  # 相关性权重（vs importance）
+  relevance_weight: 0.7
+  # 检索缓存TTL（秒）
+  cache_ttl: 300
+
+# 生命周期管理配置
+lifecycle:
+  # 记忆提取配置
+  extraction:
+    # 是否启用自动提取
+    enabled: true
+    # 最小对话轮数（少于此数不提取）
+    min_turns: 3
+    # 提取使用的LLM模型
+    model: "gpt-4o-mini"
+  
+  # 重要性权重配置
+  importance:
+    # 基础权重（按类型）
+    base_weights:
+      entity: 0.7
+      preference: 0.8
+      fact: 0.6
+      event: 0.5
+    # 时间衰减率
+    decay_rate: 0.01
+    # 访问加成系数
+    access_boost: 0.1
+  
+  # 遗忘配置
+  forgetting:
+    # 软遗忘阈值
+    soft_threshold: 0.1
+    # 软遗忘后归档天数
+    archive_days: 30
+    # 归档后删除天数
+    delete_days: 180
+    # 豁免的记忆类型
+    exempt_types:
+      - "entity"
+    # 豁免的最小访问次数
+    exempt_access_count: 10
+
+# 后台任务配置
+worker:
+  # 权重更新任务时间（cron格式）
+  importance_update_cron: "0 2 * * *"
+  # 软遗忘扫描时间
+  soft_forget_cron: "0 3 * * *"
+  # 归档任务时间
+  archive_cron: "0 4 * * 0"
+  # 一致性检查时间
+  consistency_check_cron: "0 5 * * 0"
+  # 批处理大小
+  batch_size: 1000

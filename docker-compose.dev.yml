@@ -1,0 +1,88 @@
+# Docker Compose for Local Development
+# Only deploys infrastructure services (Redis, PostgreSQL, etc.)
+# The main application runs locally for development
+
+services:
+  # Redis - Session storage and caching
+  redis:
+    image: redis:7-alpine
+    container_name: dv-agent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - dv-agent-network
+
+  # PostgreSQL - User data and persistent storage
+  postgres:
+    image: postgres:16-alpine
+    container_name: dv-agent-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: dv_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./scripts/init_users.sql:/docker-entrypoint-initdb.d/02_users.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dv_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - dv-agent-network
+
+  # Ollama - Local LLM (optional)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: dv-agent-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - dv-agent-network
+    profiles:
+      - ollama  # Only start with --profile ollama
+
+  # Redis Commander - Redis Web UI (optional, for debugging)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: dv-agent-redis-ui
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - dv-agent-network
+    profiles:
+      - debug  # Only start with --profile debug
+      
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  dv-agent-network:
+    driver: bridge

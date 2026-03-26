@@ -1,0 +1,276 @@
+# APISIX 声明式路由配置
+# 定义所有路由规则、上游服务、消费者配置
+
+#
+# ==================== Upstreams (上游服务) ====================
+#
+upstreams:
+  # FastAPI 后端服务
+  - id: backend_upstream
+    name: DV-Agent Backend
+    type: roundrobin
+    nodes:
+      "dv-agent-backend:8000": 1
+    timeout:
+      connect: 6
+      send: 60
+      read: 60
+    retries: 2
+    retry_timeout: 10
+    checks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 5
+          successes: 2
+        unhealthy:
+          interval: 5
+          http_failures: 3
+
+#
+# ==================== Consumers (消费者/用户) ====================
+#
+# JWT 认证的消费者在运行时通过 API 动态注册
+# 这里预定义一个系统消费者用于内部服务调用
+consumers:
+  - username: system_internal
+    plugins:
+      key-auth:
+        key: dv-agent-internal-key-2024
+
+#
+# ==================== Global Rules (全局规则) ====================
+#
+global_rules:
+  # 全局请求 ID
+  - id: 1
+    plugins:
+      request-id:
+        header_name: X-Request-ID
+        include_in_response: true
+  
+  # 全局 CORS 配置
+  - id: 2
+    plugins:
+      cors:
+        allow_origins: "*"
+        allow_methods: "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        allow_headers: "Content-Type, Authorization, X-Request-ID, X-Session-ID"
+        expose_headers: "X-Request-ID"
+        max_age: 3600
+        allow_credential: true
+
+#
+# ==================== Routes (路由规则) ====================
+#
+routes:
+  # ---------- 健康检查（无需认证） ----------
+  - id: health_check
+    uri: /health
+    name: Health Check
+    methods: ["GET"]
+    upstream_id: backend_upstream
+    plugins:
+      proxy-rewrite:
+        uri: /health
+
+  # ---------- 认证路由（公开访问，有限流保护） ----------
+  - id: auth_register
+    uri: /auth/register
+    name: User Registration
+    methods: ["POST"]
+    upstream_id: backend_upstream
+    plugins:
+      limit-req:
+        rate: 5
+        burst: 3
+        key: remote_addr
+        rejected_code: 429
+        rejected_msg: "Too many registration attempts"
+
+  - id: auth_login
+    uri: /auth/login
+    name: User Login
+    methods: ["POST"]
+    upstream_id: backend_upstream
+    plugins:
+      limit-req:
+        rate: 10
+        burst: 5
+        key: remote_addr
+        rejected_code: 429
+        rejected_msg: "Too many login attempts"
+
+  - id: auth_refresh
+    uri: /auth/refresh
+    name: Token Refresh
+    methods: ["POST"]
+    upstream_id: backend_upstream
+    plugins:
+      limit-req:
+        rate: 30
+        burst: 10
+        key: remote_addr
+
+  - id: auth_logout
+    uri: /auth/logout
+    name: User Logout
+    methods: ["POST"]
+    upstream_id: backend_upstream
+
+  # ---------- 需要 JWT 认证的路由 ----------
+  
+  # Auth 用户信息
+  - id: auth_me
+    uri: /auth/me
+    name: Current User Info
+    methods: ["GET"]
+    upstream_id: backend_upstream
+    plugins:
+      jwt-auth: {}
+  
+  # 业务 API (v1) - JWT 保护
+  - id: api_v1
+    uri: /api/v1/*
+    name: Business API v1
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+    upstream_id: backend_upstream
+    plugins:
+      jwt-auth: {}
+      limit-req:
+        rate: 30
+        burst: 20
+        key: consumer_name
+        rejected_code: 429
+        rejected_msg: "API rate limit exceeded"
+      limit-conn:
+        conn: 100
+        burst: 50
+        default_conn_delay: 0.1
+        key: consumer_name
+        rejected_code: 503
+        rejected_msg: "Too many concurrent connections"
+
+  # RAG API - JWT 保护
+  - id: api_rag
+    uri: /api/rag/*
+    name: RAG API
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    upstream_id: backend_upstream
+    plugins:
+      jwt-auth: {}
+      limit-req:
+        rate: 20
+        burst: 10
+        key: consumer_name
+      limit-count:
+        count: 100
+        time_window: 3600
+        key: consumer_name
+        rejected_code: 429
+        rejected_msg: "RAG API hourly limit exceeded"
+      # 文件上传限流
+      # limit-conn 用于控制并发上传
+
+  # WebSocket 路由 - JWT 保护
+  - id: websocket
+    uri: /ws
+    name: WebSocket
+    enable_websocket: true
+    upstream_id: backend_upstream
+    plugins:
+      jwt-auth:
+        # WebSocket JWT 从 query parameter 获取
+        query: token
+      limit-conn:
+        conn: 100
+        burst: 20
+        default_conn_delay: 0.1
+        key: consumer_name
+        rejected_code: 503
+
+  # A2A 协议端点 - JWT 保护
+  - id: a2a_invoke
+    uri: /a2a/invoke
+    name: A2A Invoke
+    methods: ["POST"]
+    upstream_id: backend_upstream
+    plugins:
+      jwt-auth: {}
+      limit-req:
+        rate: 60
+        burst: 30
+        key: consumer_name
+
+  # 会话管理 API
+  - id: sessions
+    uri: /api/v1/sessions
+    name: Session Management
+    methods: ["GET", "POST", "DELETE"]
+    upstream_id: backend_upstream
+    priority: 10  # 优先级高于 /api/v1/*
+    plugins:
+      jwt-auth: {}
+      limit-req:
+        rate: 60
+        burst: 30
+        key: consumer_name
+
+  - id: session_detail
+    uri: /api/v1/sessions/*
+    name: Session Detail
+    methods: ["GET", "PUT", "DELETE"]
+    upstream_id: backend_upstream
+    priority: 10
+    plugins:
+      jwt-auth: {}
+
+  # ---------- 前端代理 ----------
+  # 代理前端应用（SPA）
+  - id: frontend
+    uri: /*
+    name: Frontend SPA
+    methods: ["GET"]
+    priority: -100  # 最低优先级，作为 fallback
+    upstream:
+      type: roundrobin
+      nodes:
+        "frontend:80": 1
+    plugins: {}
+
+  # 前端静态资源 (assets)
+  - id: frontend_assets
+    uri: /assets/*
+    name: Frontend Assets
+    methods: ["GET"]
+    priority: 5
+    upstream:
+      type: roundrobin
+      nodes:
+        "frontend:80": 1
+    plugins:
+      proxy-cache:
+        cache_method: GET
+        cache_http_status:
+          - 200
+        cache_key:
+          - "$uri"
+        cache_ttl: 86400
+        hide_cache_headers: false
+
+#
+# ==================== Plugin Configs (插件配置模板) ====================
+#
+plugin_configs:
+  # JWT 认证配置
+  - id: jwt_auth_config
+    plugins:
+      jwt-auth:
+        key: dv-agent-jwt-key
+        secret: "${JWT_SECRET}"
+        algorithm: HS256
+        exp: 900  # 15 分钟
+        base64_secret: false
+
+#END
