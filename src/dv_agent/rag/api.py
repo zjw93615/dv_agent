@@ -476,9 +476,10 @@ async def search_documents(
     - **bm25**: 仅 BM25 检索（关键词）
     - **hybrid**: 混合检索（默认）
     """
-    from ..retrieval import RetrievalQuery, SearchMode
+    from .retrieval import RetrievalQuery, SearchMode
     
     try:
+        logger.info(f"[SEARCH] Received request: query={request.query[:50]}, mode={request.mode}, top_k={request.top_k}")
         tenant_id = str(current_user.id)
         
         # 构建查询
@@ -486,7 +487,7 @@ async def search_documents(
             "dense": SearchMode.DENSE_ONLY,
             "sparse": SearchMode.SPARSE_ONLY,
             "bm25": SearchMode.BM25_ONLY,
-            "hybrid": SearchMode.HYBRID,
+            "hybrid": SearchMode.HYBRID_ALL,  # 默认使用全路召回
         }
         
         query = RetrievalQuery(
@@ -494,28 +495,28 @@ async def search_documents(
             tenant_id=tenant_id,
             collection_id=request.collection_ids[0] if request.collection_ids else None,
             top_k=request.top_k,
-            mode=mode_map.get(request.mode, SearchMode.HYBRID),
-            use_reranking=request.use_reranking,
-            use_query_expansion=request.use_query_expansion,
+            mode=mode_map.get(request.mode, SearchMode.HYBRID_ALL),
+            rerank=request.use_reranking,
+            expand_queries=request.use_query_expansion,
             filters=request.filters,
         )
         
         # 执行检索
-        response = await retriever.search(query)
+        response = await retriever.retrieve(query)
         
         # 构建响应
         results = [
             SearchResultItem(
-                chunk_id=r.chunk_id,
-                document_id=r.document_id,
+                chunk_id=str(r.chunk_id),  # 转换 UUID 为字符串
+                document_id=str(r.doc_id),  # 转换 UUID 为字符串
                 content=r.content,
-                score=r.final_score,
-                chunk_index=r.chunk_index,
+                score=r.score,
+                chunk_index=0,  # TODO: 需要从 metadata 中获取
                 metadata=r.metadata,
-                dense_score=r.dense_score,
-                sparse_score=r.sparse_score,
-                bm25_score=r.bm25_score,
-                rerank_score=r.rerank_score,
+                dense_score=r.source_scores.get('dense', 0.0),
+                sparse_score=r.source_scores.get('sparse', 0.0),
+                bm25_score=r.source_scores.get('bm25', 0.0),
+                rerank_score=r.source_scores.get('rerank', 0.0),
             )
             for r in response.results
         ]
@@ -525,7 +526,7 @@ async def search_documents(
             results=results,
             total=len(results),
             latency_ms=response.latency_ms,
-            from_cache=response.from_cache,
+            from_cache=False,  # TODO: RetrievalResponse 没有 from_cache 字段
             expanded_queries=response.expanded_queries,
         )
         
@@ -552,35 +553,36 @@ async def simple_search(
     """
     try:
         tenant_id = str(current_user.id)
-        response = await retriever.simple_search(
+        results_list = await retriever.simple_search(
             query=query,
             tenant_id=tenant_id,
             collection_id=collection_id,
             top_k=top_k,
         )
         
+        # simple_search 返回 List[RetrievalResult]，不是 RetrievalResponse
         results = [
             SearchResultItem(
-                chunk_id=r.chunk_id,
-                document_id=r.document_id,
+                chunk_id=str(r.chunk_id),
+                document_id=str(r.doc_id),
                 content=r.content,
-                score=r.final_score,
-                chunk_index=r.chunk_index,
+                score=r.score,
+                chunk_index=0,
                 metadata=r.metadata,
-                dense_score=r.dense_score,
-                sparse_score=r.sparse_score,
-                bm25_score=r.bm25_score,
-                rerank_score=r.rerank_score,
+                dense_score=r.source_scores.get('dense', 0.0),
+                sparse_score=r.source_scores.get('sparse', 0.0),
+                bm25_score=r.source_scores.get('bm25', 0.0),
+                rerank_score=r.source_scores.get('rerank', 0.0),
             )
-            for r in response.results
+            for r in results_list
         ]
         
         return SearchResponse(
             query=query,
             results=results,
             total=len(results),
-            latency_ms=response.latency_ms,
-            from_cache=response.from_cache,
+            latency_ms=0.0,  # simple_search 不返回 latency
+            from_cache=False,
         )
         
     except Exception as e:

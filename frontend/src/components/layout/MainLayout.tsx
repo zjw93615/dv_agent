@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Menu, X, LogOut, FileText, Settings, User, MessageSquare } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import SessionList from '../session/SessionList';
 import clsx from 'clsx';
 
@@ -15,6 +16,9 @@ export default function MainLayout() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
+  
+  // 初始化 WebSocket 连接
+  const { isConnected } = useWebSocket({ autoConnect: true });
 
   const isDocumentsPage = location.pathname === '/documents';
 
@@ -120,13 +124,24 @@ export default function MainLayout() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="flex items-center h-16 px-4 border-b border-slate-700 bg-slate-800/50">
+        <header className="flex items-center justify-between h-16 px-4 border-b border-slate-700 bg-slate-800/50">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition"
           >
             {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
+          
+          {/* WebSocket 连接状态指示器 */}
+          <div className="flex items-center gap-2 text-xs">
+            <div className={clsx(
+              'w-2 h-2 rounded-full transition-colors',
+              isConnected ? 'bg-green-500' : 'bg-red-500'
+            )} />
+            <span className="text-slate-400">
+              {isConnected ? '已连接' : '未连接'}
+            </span>
+          </div>
         </header>
 
         {/* Page Content */}

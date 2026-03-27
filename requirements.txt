@@ -50,6 +50,11 @@ pymilvus>=2.3.0
 # Embedding & Reranking Models
 sentence-transformers>=2.5.0
 
+# PyTorch (required >=2.6.0 for security patch CVE-2025-32434)
+torch>=2.6.0
+torchvision>=0.21.0
+torchaudio>=2.6.0
+
 # Transformers (pinned to <5.0.0 for FlagEmbedding compatibility)
 transformers>=4.44.2,<5.0.0
 huggingface-hub>=0.34.0,<1.0

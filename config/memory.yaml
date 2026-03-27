@@ -50,8 +50,8 @@ embedding:
   batch_size: 32
   # 缓存TTL（秒）
   cache_ttl: 86400
-  # 设备（cpu/cuda）
-  device: "cpu"
+  # 设备（cpu/cuda/auto）
+  device: "cuda"
 
 # 检索配置
 retrieval:

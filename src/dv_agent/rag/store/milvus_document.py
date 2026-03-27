@@ -246,6 +246,7 @@ class MilvusDocumentStore:
         tenant_id: str,
         top_k: int = 20,
         collection_id: Optional[str] = None,
+        doc_ids: Optional[list[str]] = None,
     ) -> list[VectorSearchResult]:
         """
         稠密向量搜索
@@ -254,7 +255,8 @@ class MilvusDocumentStore:
             vector: 查询向量
             tenant_id: 租户ID
             top_k: 返回数量
-            collection_id: 集合ID（用于过滤）
+            collection_id: 集合ID(已废弃,使用 doc_ids 替代)
+            doc_ids: 文档ID列表(用于过滤特定文档)
             
         Returns:
             搜索结果列表
@@ -262,10 +264,12 @@ class MilvusDocumentStore:
         collection = self._get_collection(self.dense_collection)
         
         try:
-            # 构建过滤表达式
+            # 构建过滤表达式:只使用 tenant_id 和 doc_ids
             expr = f'tenant_id == "{tenant_id}"'
-            if collection_id:
-                expr += f' && collection_id == "{collection_id}"'
+            if doc_ids:
+                # 使用 IN 操作符过滤文档
+                doc_id_list = ', '.join(f'"{did}"' for did in doc_ids)
+                expr += f' && doc_id in [{doc_id_list}]'
             
             # 加载集合
             collection.load()
@@ -310,6 +314,17 @@ class MilvusDocumentStore:
         collection = self._get_collection(self.dense_collection)
         
         try:
+            # 确保 collection 已加载
+            from pymilvus import utility
+            try:
+                state = utility.load_state(self.dense_collection)
+                if state.name != "Loaded":
+                    logger.info(f"Loading dense collection before delete: {self.dense_collection} (current state: {state.name})")
+                    collection.load()
+            except Exception as load_err:
+                # 如果加载失败（例如没有索引），记录警告但继续尝试删除
+                logger.warning(f"Failed to load dense collection, will try delete anyway: {load_err}")
+            
             collection.delete(f'doc_id == "{doc_id}"')
             return True
         except Exception as e:
@@ -381,6 +396,7 @@ class MilvusDocumentStore:
         tenant_id: str,
         top_k: int = 20,
         collection_id: Optional[str] = None,
+        doc_ids: Optional[list[str]] = None,
     ) -> list[VectorSearchResult]:
         """
         稀疏向量搜索
@@ -389,7 +405,8 @@ class MilvusDocumentStore:
             vector: 查询向量（dict 格式）
             tenant_id: 租户ID
             top_k: 返回数量
-            collection_id: 集合ID
+            collection_id: 集合ID(已废弃,使用 doc_ids 替代)
+            doc_ids: 文档ID列表(用于过滤特定文档)
             
         Returns:
             搜索结果列表
@@ -397,10 +414,12 @@ class MilvusDocumentStore:
         collection = self._get_collection(self.sparse_collection)
         
         try:
-            # 构建过滤表达式
+            # 构建过滤表达式:只使用 tenant_id 和 doc_ids
             expr = f'tenant_id == "{tenant_id}"'
-            if collection_id:
-                expr += f' && collection_id == "{collection_id}"'
+            if doc_ids:
+                # 使用 IN 操作符过滤文档
+                doc_id_list = ', '.join(f'"{did}"' for did in doc_ids)
+                expr += f' && doc_id in [{doc_id_list}]'
             
             collection.load()
             
@@ -442,6 +461,17 @@ class MilvusDocumentStore:
         collection = self._get_collection(self.sparse_collection)
         
         try:
+            # 确保 collection 已加载
+            from pymilvus import utility
+            try:
+                state = utility.load_state(self.sparse_collection)
+                if state.name != "Loaded":
+                    logger.info(f"Loading sparse collection before delete: {self.sparse_collection} (current state: {state.name})")
+                    collection.load()
+            except Exception as load_err:
+                # 如果加载失败（例如没有索引），记录警告但继续尝试删除
+                logger.warning(f"Failed to load sparse collection, will try delete anyway: {load_err}")
+            
             collection.delete(f'doc_id == "{doc_id}"')
             return True
         except Exception as e:

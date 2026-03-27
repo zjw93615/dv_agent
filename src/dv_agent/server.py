@@ -176,12 +176,12 @@ async def init_rag_components():
         try:
             from .rag.embedding import BGEM3Embedder
             embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "BAAI/bge-m3")
-            embedding_device = os.getenv("RAG_EMBEDDING_DEVICE", "cpu")
+            embedding_device = os.getenv("RAG_EMBEDDING_DEVICE", "cuda")  # 默认使用 CUDA
             embedder = BGEM3Embedder(
                 model_name=embedding_model,
                 device=embedding_device,
             )
-            print(f"✅ Embedding model loaded: {embedding_model}")
+            print(f"✅ Embedding model loaded: {embedding_model} on {embedding_device}")
         except Exception as e:
             print(f"⚠️  Embedding model not available: {e}")
             print("   Document vectorization and search will fall back to BM25/keyword search")
@@ -260,6 +260,38 @@ _server = A2AServer(
 
 # Export the FastAPI app for uvicorn
 app = _server.app
+
+# Add exception handler for validation errors
+from fastapi import Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle 422 Validation Errors with detailed logging"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Log detailed validation error
+    logger.error(f"Validation error for {request.method} {request.url.path}")
+    logger.error(f"Request body: {await request.body()}")
+    logger.error(f"Validation errors: {exc.errors()}")
+    
+    print(f"\n{'='*60}")
+    print(f"❌ Validation Error: {request.method} {request.url.path}")
+    print(f"{'='*60}")
+    print(f"Errors:")
+    for error in exc.errors():
+        print(f"  - {error}")
+    print(f"{'='*60}\n")
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": exc.errors(),
+            "body": exc.body if hasattr(exc, 'body') else None
+        },
+    )
 
 # Set lifespan handler
 app.router.lifespan_context = lifespan

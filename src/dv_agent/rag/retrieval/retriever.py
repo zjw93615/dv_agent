@@ -313,13 +313,22 @@ class HybridRetriever:
         all_results = []
         seen_ids = set()
         
-        # 批量检索
+        # 如果指定了 collection_id,先从 PG 查询该集合的文档列表
+        doc_ids = None
+        if collection_id:
+            doc_ids = await self._get_collection_doc_ids(tenant_id, collection_id)
+            if not doc_ids:
+                logger.warning(f"No documents found in collection {collection_id}")
+                return []
+        
+        # 批量检索(不再传递 collection_id,而是传递 doc_ids)
         results_map = await self.dense_searcher.batch_search(
             queries=queries,
             tenant_id=tenant_id,
-            collection_id=collection_id,
+            collection_id=None,  # 不再使用
             top_k=self.config.dense_top_k,
-            filters=filters
+            filters=filters,
+            doc_ids=doc_ids  # 使用 doc_ids 过滤
         )
         
         # 合并去重
@@ -350,12 +359,21 @@ class HybridRetriever:
         all_results = []
         seen_ids = set()
         
+        # 如果指定了 collection_id,先从 PG 查询该集合的文档列表
+        doc_ids = None
+        if collection_id:
+            doc_ids = await self._get_collection_doc_ids(tenant_id, collection_id)
+            if not doc_ids:
+                logger.warning(f"No documents found in collection {collection_id}")
+                return []
+        
         results_map = await self.sparse_searcher.batch_search(
             queries=queries,
             tenant_id=tenant_id,
-            collection_id=collection_id,
+            collection_id=None,  # 不再使用
             top_k=self.config.sparse_top_k,
-            filters=filters
+            filters=filters,
+            doc_ids=doc_ids  # 使用 doc_ids 过滤
         )
         
         for query, results in results_map.items():
@@ -475,6 +493,41 @@ class HybridRetriever:
             )
             for c in candidates
         ]
+    
+    async def _get_collection_doc_ids(
+        self,
+        tenant_id: str,
+        collection_id: str
+    ) -> Optional[List[str]]:
+        """
+        从 PostgreSQL 查询集合中的所有文档ID
+        
+        Args:
+            tenant_id: 租户ID
+            collection_id: 集合ID
+            
+        Returns:
+            文档ID列表(字符串),如果集合不存在或为空则返回 None
+        """
+        try:
+            # 调用 PG 查询集合文档
+            docs = await self.pg_store.list_documents(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                limit=10000  # 假设一个集合不会超过1万个文档
+            )
+            
+            if not docs:
+                return None
+            
+            # 提取 doc_id 并转换为字符串(PostgreSQL 返回的字段名是 "doc_id")
+            doc_ids = [str(doc["doc_id"]) for doc in docs]
+            logger.debug(f"Found {len(doc_ids)} documents in collection {collection_id}")
+            return doc_ids
+            
+        except Exception as e:
+            logger.error(f"Failed to get collection doc_ids: {e}", exc_info=True)
+            return None
     
     async def simple_search(
         self,

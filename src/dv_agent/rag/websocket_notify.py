@@ -73,6 +73,12 @@ async def notify_document_completed(
         是否发送成功
     """
     try:
+        print(f"[WS-NOTIFY] 准备发送文档完成通知:")
+        print(f"[WS-NOTIFY]   - tenant_id: {tenant_id}")
+        print(f"[WS-NOTIFY]   - document_id: {document_id}")
+        print(f"[WS-NOTIFY]   - filename: {filename}")
+        print(f"[WS-NOTIFY]   - chunk_count: {chunk_count}")
+        
         from ..websocket.manager import ws_manager
         from ..websocket.models import DocumentCompletedEvent
         
@@ -82,15 +88,23 @@ async def notify_document_completed(
             chunk_count=chunk_count,
         )
         
+        print(f"[WS-NOTIFY] 调用 ws_manager.send_to_user()...")
         sent = await ws_manager.send_to_user(tenant_id, event)
         
         if sent > 0:
+            print(f"[WS-NOTIFY] ✅ 成功发送到 {sent} 个连接")
             logger.info(f"Sent completion notification to {sent} connections: {document_id}")
+        else:
+            print(f"[WS-NOTIFY] ⚠️  没有活动的 WebSocket 连接 (sent={sent})")
+            logger.warning(f"No active WebSocket connections for tenant {tenant_id}")
         
         return sent > 0
         
     except Exception as e:
+        print(f"[WS-NOTIFY] ❌ 发送失败: {e}")
         logger.warning(f"Failed to send document completion notification: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 

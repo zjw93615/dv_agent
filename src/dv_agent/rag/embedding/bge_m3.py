@@ -167,22 +167,92 @@ class BGEM3Embedder:
     
     def _load_model(self) -> None:
         """延迟加载模型"""
+        print(f"\n[BGE-M3] >>> _load_model() called")
+        print(f"[BGE-M3] >>> Model already loaded: {self._model_loaded}")
+        
         if self._model_loaded:
+            print(f"[BGE-M3] >>> Model already loaded, skipping")
             return
+        
+        print(f"[BGE-M3] >>> Starting model loading process...")
         
         try:
             from FlagEmbedding import BGEM3FlagModel
+            import time
             
-            logger.info(f"Loading BGE-M3 model: {self.model_name}")
+            print(f"\n{'='*60}")
+            print(f"[BGE-M3] 🔄 Loading model: {self.model_name}")
+            print(f"[BGE-M3] Device: {self.device}, FP16: {self.use_fp16}")
+            print(f"[BGE-M3] This may take 30-60 seconds...")
+            print(f"{'='*60}\n")
+            
+            logger.info(f"[BGE-M3] Loading model: {self.model_name}")
+            logger.info(f"[BGE-M3] Device: {self.device}, FP16: {self.use_fp16}")
+            logger.info(f"[BGE-M3] This may take a minute for first-time loading...")
+            
+            load_start = time.time()
+            
+            print(f"[BGE-M3] Step 1/4: Creating BGEM3FlagModel instance...")
+            logger.info(f"[BGE-M3] Step 1/4: Creating BGEM3FlagModel instance...")
+            init_start = time.time()
             
             self._model = BGEM3FlagModel(
                 self.model_name,
                 use_fp16=self.use_fp16,
                 device=self.device,
             )
-            self._model_loaded = True
             
-            logger.info("BGE-M3 model loaded successfully")
+            init_time = time.time() - init_start
+            print(f"[BGE-M3] Step 1/4: ✅ Model instance created in {init_time:.2f}s")
+            logger.info(f"[BGE-M3] Step 1/4: Model instance created in {init_time:.2f}s")
+            
+            # 强制将模型移动到指定设备（修复 FlagEmbedding 的 device 参数问题）
+            import torch
+            if self.device == "cuda" and torch.cuda.is_available():
+                if hasattr(self._model, 'model'):
+                    print(f"[BGE-M3] Step 2/4: Moving model to CUDA...")
+                    logger.info(f"[BGE-M3] Step 2/4: Moving model to CUDA...")
+                    cuda_start = time.time()
+                    
+                    self._model.model = self._model.model.to('cuda')
+                    print(f"[BGE-M3]   - Main model moved to CUDA ({time.time() - cuda_start:.2f}s)")
+                    logger.info(f"[BGE-M3]   - Main model moved ({time.time() - cuda_start:.2f}s)")
+                    
+                    if hasattr(self._model, 'colbert_linear') and self._model.colbert_linear is not None:
+                        self._model.colbert_linear = self._model.colbert_linear.to('cuda')
+                        print(f"[BGE-M3]   - ColBERT linear moved to CUDA")
+                        logger.info(f"[BGE-M3]   - ColBERT linear moved")
+                    
+                    if hasattr(self._model, 'sparse_linear') and self._model.sparse_linear is not None:
+                        self._model.sparse_linear = self._model.sparse_linear.to('cuda')
+                        print(f"[BGE-M3]   - Sparse linear moved to CUDA")
+                        logger.info(f"[BGE-M3]   - Sparse linear moved")
+                    
+                    cuda_time = time.time() - cuda_start
+                    print(f"[BGE-M3] Step 2/4: ✅ CUDA transfer completed in {cuda_time:.2f}s")
+                    logger.info(f"[BGE-M3] Step 2/4: CUDA transfer completed in {cuda_time:.2f}s")
+            
+            self._model_loaded = True
+            load_time = time.time() - load_start
+            
+            # 验证设备
+            try:
+                if hasattr(self._model, 'model'):
+                    actual_device = next(self._model.model.parameters()).device
+                    logger.info(f"[BGE-M3] ✅ Model loaded successfully in {load_time:.2f}s on device: {actual_device}")
+                    print(f"[BGE-M3] ✅ Model ready on {actual_device} (took {load_time:.2f}s)")
+                    
+                    # 如果设备不匹配，给出警告
+                    if self.device == "cuda" and actual_device.type != "cuda":
+                        logger.error(f"[BGE-M3] WARNING: Requested cuda but model is on {actual_device}")
+                        logger.error(f"[BGE-M3] This will result in slow performance!")
+                        print(f"[BGE-M3] ��️  WARNING: Model is on {actual_device}, not cuda!")
+                else:
+                    logger.info(f"[BGE-M3] ✅ Model loaded successfully in {load_time:.2f}s (device verification skipped)")
+                    print(f"[BGE-M3] ✅ Model ready (took {load_time:.2f}s)")
+            except Exception as e:
+                logger.warning(f"[BGE-M3] Could not verify device: {e}")
+                logger.info(f"[BGE-M3] Model loaded successfully in {load_time:.2f}s")
             
         except ImportError:
             raise ImportError(
@@ -320,7 +390,12 @@ class BGEM3Embedder:
         
         # 处理未缓存的文本
         if uncached_texts:
+            logger.info(f"[EMBEDDING] 有 {len(uncached_texts)} 个未缓存文本需要处理")
+            logger.info(f"[EMBEDDING] 正在加载模型...")
+            
             self._load_model()
+            
+            logger.info(f"[EMBEDDING] 模型加载完成，开始嵌入...")
             
             total_batches = (len(uncached_texts) + batch_size - 1) // batch_size
             logger.info(f"[EMBEDDING] 开始批量嵌入: {len(uncached_texts)} 文本, {total_batches} 批次")
@@ -331,10 +406,15 @@ class BGEM3Embedder:
                 batch_texts = uncached_texts[batch_start:batch_end]
                 batch_num = batch_start // batch_size + 1
                 
+                batch_lengths = [len(t) for t in batch_texts]
+                print(f"[EMBEDDING] 📦 批次 {batch_num}/{total_batches}: {len(batch_texts)} 文本, 总字符: {sum(batch_lengths):,}")
                 logger.info(f"[EMBEDDING] 处理批次 {batch_num}/{total_batches} ({len(batch_texts)} 文本)...")
                 
                 import time
                 encode_start = time.time()
+                
+                print(f"[EMBEDDING]   ⏳ 正在调用 model.encode()...")
+                logger.info(f"[EMBEDDING]   调用 model.encode()...")
                 outputs = self._model.encode(
                     batch_texts,
                     return_dense=return_dense,
@@ -342,6 +422,8 @@ class BGEM3Embedder:
                     max_length=self.max_length,
                 )
                 encode_time = time.time() - encode_start
+                print(f"[EMBEDDING]   ✅ 批次完成, 耗时: {encode_time:.2f}s, 速度: {len(batch_texts)/encode_time:.1f} 文本/秒")
+                logger.info(f"[EMBEDDING]   model.encode() 返回")
                 logger.info(f"[EMBEDDING] 批次 {batch_num} 完成, 耗时: {encode_time:.2f}s")
                 
                 for j, text in enumerate(batch_texts):
@@ -403,12 +485,34 @@ class BGEM3Embedder:
         Returns:
             向量化结果列表
         """
-        return self.embed_batch(
+        print(f"\n[EMBEDDING] 📝 embed_documents() 被调用:")
+        print(f"[EMBEDDING]   - 文档数量: {len(documents)}")
+        print(f"[EMBEDDING]   - 批处理大小: {batch_size}")
+        
+        # 显示文档长度统计
+        if documents:
+            lengths = [len(doc) for doc in documents]
+            print(f"[EMBEDDING]   - 文档长度: min={min(lengths)}, max={max(lengths)}, avg={sum(lengths)//len(lengths)}")
+            print(f"[EMBEDDING]   - 总字符数: {sum(lengths):,}")
+            
+            # 警告超长文档
+            long_docs = [i for i, l in enumerate(lengths) if l > 10000]
+            if long_docs:
+                print(f"[EMBEDDING]   ⚠️  发现 {len(long_docs)} 个超长文档 (>10K字符): {long_docs[:5]}")
+        
+        logger.info(f"[EMBEDDING] embed_documents() 被调用: {len(documents)} 个文档")
+        logger.info(f"[EMBEDDING] batch_size: {batch_size}")
+        logger.info(f"[EMBEDDING] 模型已加载: {self._model_loaded}")
+        
+        result = self.embed_batch(
             documents,
             return_sparse=True,
             return_dense=True,
             batch_size=batch_size,
         )
+        
+        logger.info(f"[EMBEDDING] embed_documents() 完成，返回 {len(result)} 个结果")
+        return result
     
     def clear_cache(self) -> None:
         """清空缓存"""

@@ -666,12 +666,21 @@ class DocumentManager:
                 logger.info(f"[DOC-PROCESS] [阶段4] 开始向量化...")
                 logger.info(f"[DOC-PROCESS]   embedder: {type(self.embedder).__name__}")
                 logger.info(f"[DOC-PROCESS]   待嵌入文本数: {len(chunks)}")
+                logger.info(f"[DOC-PROCESS]   准备调用 embed_documents()...")
                 
                 import time
                 embed_start = time.time()
-                embeddings = self.embedder.embed_documents(
-                    [c.content for c in chunks]
-                )
+                
+                try:
+                    logger.info(f"[DOC-PROCESS]   >>> 正在调用 embedder.embed_documents()...")
+                    embeddings = self.embedder.embed_documents(
+                        [c.content for c in chunks]
+                    )
+                    logger.info(f"[DOC-PROCESS]   <<< embed_documents() 调用完成")
+                except Exception as embed_error:
+                    logger.error(f"[DOC-PROCESS]   !!! embed_documents() 调用失败: {embed_error}")
+                    raise
+                
                 embed_time = time.time() - embed_start
                 
                 logger.info(f"[DOC-PROCESS] [阶段4] 向量嵌入完成，耗时: {embed_time:.2f}s")
@@ -722,15 +731,27 @@ class DocumentManager:
             
             # 发送完成通知
             try:
+                logger.info(f"[DOC-PROCESS] 正在发送完成通知...")
+                print(f"[DOC-PROCESS] 📡 发送 WebSocket 完成通知给 tenant: {tenant_id}")
+                
                 from ..websocket_notify import notify_document_completed
-                await notify_document_completed(
+                success = await notify_document_completed(
                     tenant_id=tenant_id,
                     document_id=doc_id,
                     filename=doc.get("filename", ""),
                     chunk_count=len(chunks) if chunks else 0,
                 )
+                
+                if success:
+                    print(f"[DOC-PROCESS] ✅ WebSocket 通知发送成功")
+                    logger.info(f"[DOC-PROCESS] WebSocket 通知发送成功")
+                else:
+                    print(f"[DOC-PROCESS] ⚠️  WebSocket 通知发送失败（可能没有活动连接）")
+                    logger.warning(f"[DOC-PROCESS] WebSocket 通知发送失败")
+                    
             except Exception as e:
-                logger.debug(f"Failed to send completion notification: {e}")
+                print(f"[DOC-PROCESS] ❌ WebSocket 通知异常: {e}")
+                logger.error(f"Failed to send completion notification: {e}")
             
             logger.info("=" * 60)
             logger.info(f"[DOC-PROCESS] 文档处理完成!")

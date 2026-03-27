@@ -127,7 +127,8 @@ class SparseSearcher:
         tenant_id: str,
         collection_id: Optional[str] = None,
         top_k: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        doc_ids: Optional[List[str]] = None
     ) -> Dict[str, List[SparseSearchResult]]:
         """
         批量查询检索
@@ -135,9 +136,10 @@ class SparseSearcher:
         Args:
             queries: 查询文本列表
             tenant_id: 租户ID
-            collection_id: 文档集合ID
+            collection_id: 文档集合ID(已废弃,使用 doc_ids)
             top_k: 每个查询返回数量
             filters: 过滤条件
+            doc_ids: 文档ID列表(用于按集合过滤)
             
         Returns:
             {query: [results]} 字典
@@ -150,19 +152,18 @@ class SparseSearcher:
             embedding_result = self.embedder.embed(query, return_sparse=True, return_dense=False)
             sparse_vectors.append(embedding_result.sparse_embedding)
         
-        # 构建过滤表达式
-        filter_expr = self._build_filter_expr(tenant_id, collection_id, filters)
-        
         # 并行检索
         async def search_one(idx: int, query: str, sparse_vec):
             if sparse_vec is None or len(sparse_vec) == 0:
                 return query, []
             
             try:
-                results = await self.milvus.search_sparse(
-                    sparse_vector=sparse_vec,
+                results = self.milvus.search_sparse(
+                    vector=sparse_vec,
+                    tenant_id=tenant_id,
                     top_k=top_k,
-                    filter_expr=filter_expr
+                    collection_id=None,  # 不再使用
+                    doc_ids=doc_ids  # 使用 doc_ids 过滤
                 )
                 
                 search_results = [

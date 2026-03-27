@@ -23,7 +23,12 @@ export default function SearchPanel() {
     setHasSearched(true);
 
     try {
-      const response = await ragApi.search(currentCollectionId, query.trim());
+      // 正确的参数顺序：(query, collectionIds, limit)
+      const response = await ragApi.search(
+        query.trim(), 
+        [currentCollectionId], // 传递数组
+        10
+      );
       setResults(response.results);
     } catch (error) {
       console.error('Search failed:', error);

@@ -265,17 +265,22 @@ class RAGConfigLoader:
     
     def _build_embedding_config(self, data: Dict[str, Any]) -> EmbeddingConfig:
         """构建向量化配置"""
+        # 支持嵌套的 model 配置
+        model_config = data.get("model", {})
+        sparse_config = data.get("sparse", {})
+        cache_config = data.get("cache", {})
+        
         return EmbeddingConfig(
-            model_name=data.get("model_name", "BAAI/bge-m3"),
+            model_name=model_config.get("name") or data.get("model_name", "BAAI/bge-m3"),
             model_path=data.get("model_path"),
-            device=data.get("device", "auto"),
+            device=model_config.get("device") or data.get("device", "auto"),
             max_length=data.get("max_length", 8192),
             batch_size=data.get("batch_size", 32),
-            use_fp16=data.get("use_fp16", True),
-            cache_enabled=data.get("cache_enabled", True),
+            use_fp16=model_config.get("use_fp16", data.get("use_fp16", True)),
+            cache_enabled=cache_config.get("enabled", data.get("cache_enabled", True)),
             cache_max_size=data.get("cache_max_size", 10000),
-            sparse_top_k=data.get("sparse_top_k", 256),
-            sparse_min_weight=data.get("sparse_min_weight", 0.0)
+            sparse_top_k=sparse_config.get("max_features", data.get("sparse_top_k", 256)),
+            sparse_min_weight=sparse_config.get("min_weight", data.get("sparse_min_weight", 0.0))
         )
     
     def _build_pipeline_config(self, data: Dict[str, Any]) -> PipelineConfig:

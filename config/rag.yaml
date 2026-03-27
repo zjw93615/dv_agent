@@ -54,6 +54,7 @@ embedding:
   model:
     name: "BAAI/bge-m3"
     dimension: 1024
+    device: "cuda"           # Device: cuda/cpu/auto
     use_fp16: true           # Half precision for GPU
 
   # Sparse vector configuration

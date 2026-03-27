@@ -96,9 +96,10 @@ class DenseSearcher:
         # Milvus检索
         try:
             results = await self.milvus.search_dense(
-                query_vector=query_vector,
+                vector=query_vector,
+                tenant_id=tenant_id,
                 top_k=top_k,
-                filter_expr=filter_expr
+                collection_id=collection_id
             )
             
             # 转换结果
@@ -126,7 +127,8 @@ class DenseSearcher:
         tenant_id: str,
         collection_id: Optional[str] = None,
         top_k: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        doc_ids: Optional[List[str]] = None
     ) -> Dict[str, List[DenseSearchResult]]:
         """
         批量查询检索
@@ -134,9 +136,10 @@ class DenseSearcher:
         Args:
             queries: 查询文本列表
             tenant_id: 租户ID
-            collection_id: 文档集合ID
+            collection_id: 文档集合ID(已废弃,使用 doc_ids)
             top_k: 每个查询返回数量
             filters: 过滤条件
+            doc_ids: 文档ID列表(用于按集合过滤)
             
         Returns:
             {query: [results]} 字典
@@ -152,9 +155,6 @@ class DenseSearcher:
             else:
                 query_vectors.append(None)
         
-        # 构建过滤表达式
-        filter_expr = self._build_filter_expr(tenant_id, collection_id, filters)
-        
         # 并行检索
         results_map = {}
         
@@ -164,9 +164,11 @@ class DenseSearcher:
             
             try:
                 results = await self.milvus.search_dense(
-                    query_vector=vector,
+                    vector=vector,
+                    tenant_id=tenant_id,
                     top_k=top_k,
-                    filter_expr=filter_expr
+                    collection_id=None,  # 不再使用
+                    doc_ids=doc_ids  # 使用 doc_ids 过滤
                 )
                 
                 search_results = [
@@ -222,9 +224,10 @@ class DenseSearcher:
         
         try:
             results = await self.milvus.search_dense(
-                query_vector=query_vector,
+                vector=query_vector,
+                tenant_id=tenant_id,
                 top_k=top_k,
-                filter_expr=filter_expr
+                collection_id=collection_id
             )
             
             return [
