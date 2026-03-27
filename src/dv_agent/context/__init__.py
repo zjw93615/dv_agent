@@ -7,6 +7,7 @@
 - ObservationTruncator: 工具输出截断器
 - PromptTemplate: 结构化提示词模板
 - EntityMemory: 实体记忆系统
+- RAGContextRetriever: RAG 上下文检索器 (向量检索历史对话)
 """
 
 from .token_counter import TokenCounter, get_token_counter
@@ -33,6 +34,11 @@ from .entity_memory import (
     EntityType,
     get_entity_memory,
     clear_memory_cache,
+)
+from .rag_context_retriever import (
+    RAGContextRetriever,
+    RetrievedContext,
+    retrieve_relevant_context,
 )
 
 __all__ = [
@@ -65,4 +71,8 @@ __all__ = [
     "EntityType",
     "get_entity_memory",
     "clear_memory_cache",
+    # RAG 上下文检索
+    "RAGContextRetriever",
+    "RetrievedContext",
+    "retrieve_relevant_context",
 ]

@@ -20,6 +20,7 @@ from ..tools.models import ToolResult
 from ..session.models import ReActStep, AgentContext
 from ..config.exceptions import ReActLoopError, ReActMaxStepsError
 from ..config.logging import get_logger
+from ..context.observation_truncator import ObservationTruncator
 
 logger = get_logger(__name__)
 
@@ -363,18 +364,43 @@ class ReActLoop:
             )
             results.append(result)
         
+        # 初始化 ObservationTruncator
+        truncator = ObservationTruncator(
+            max_tokens=2000,  # 每个工具输出最多 2000 tokens
+            strategy="smart",  # 使用智能截断
+            save_full_output=True,  # 保存完整输出到文件
+        )
+        
         # 构建观察消息
         observation_messages = []
         observation_text = []
         
         for tc, result in zip(tool_calls, results):
             content = result.to_string()
+            
+            # 截断工具输出
+            truncated_content, metadata = truncator.truncate(
+                observation=content,
+                tool_name=tc["name"],
+            )
+            
             observation_messages.append({
                 "role": "tool",
-                "content": content,
+                "content": truncated_content,
                 "tool_call_id": tc["id"],
             })
-            observation_text.append(f"[{tc['name']}]: {content}")
+            observation_text.append(f"[{tc['name']}]: {truncated_content}")
+            
+            # 如果被截断,记录日志
+            if metadata.get("truncated", False):
+                logger.info(
+                    f"Tool output truncated",
+                    agent=self.agent_id,
+                    tool=tc["name"],
+                    original_tokens=metadata.get("original_tokens"),
+                    truncated_tokens=metadata.get("truncated_tokens"),
+                    saved_to=metadata.get("saved_to"),
+                )
         
         return {
             "phase": ReActPhase.OBSERVE.value,
