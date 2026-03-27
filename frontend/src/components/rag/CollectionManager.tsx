@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react';
 import { FolderOpen, Plus, Trash2, Loader2 } from 'lucide-react';
 import { useRagStore } from '../../stores/ragStore';
+import { useRagWebSocket } from '../../hooks/useRagWebSocket';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 
@@ -19,6 +20,9 @@ export default function CollectionManager() {
     deleteCollection,
     setCurrentCollection,
   } = useRagStore();
+
+  // 注册 RAG WebSocket 事件处理
+  useRagWebSocket();
 
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newName, setNewName] = useState('');

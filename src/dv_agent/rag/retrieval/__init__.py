@@ -62,9 +62,12 @@ class RetrievalResponse:
     debug_info: Dict[str, Any] = field(default_factory=dict)  # 调试信息
 
 
+from .retriever import HybridRetriever
+
 __all__ = [
     "SearchMode",
     "RetrievalQuery", 
     "RetrievalResult",
     "RetrievalResponse",
+    "HybridRetriever",
 ]

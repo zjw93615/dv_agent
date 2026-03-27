@@ -83,8 +83,26 @@ embedding = [
     "chromadb>=0.4.0",
 ]
 
+rag = [
+    # Transformers (pinned to <5.0.0 for FlagEmbedding compatibility)
+    "transformers>=4.44.2,<5.0.0",
+    "huggingface-hub>=0.34.0,<1.0",
+    # BGE-M3 Embedding Model
+    "FlagEmbedding>=1.2.0",
+    # Document Processing
+    "unstructured[all-docs]>=0.12.0",
+    "python-magic>=0.4.27",
+    "PyMuPDF>=1.23.0",
+    # Object Storage
+    "minio>=7.2.0",
+    # Vector Database
+    "pymilvus>=2.3.0",
+    # PostgreSQL
+    "asyncpg>=0.29.0",
+]
+
 all = [
-    "dv-agent[dev,ollama,mcp,embedding]",
+    "dv-agent[dev,ollama,mcp,embedding,rag]",
 ]
 
 [project.urls]

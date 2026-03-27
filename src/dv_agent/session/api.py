@@ -479,6 +479,22 @@ async def send_message(
     )
 
 
+# ===== 上下文管理配置 =====
+MAX_CONTEXT_MESSAGES = 20  # 最多保留的历史消息数量
+MAX_CONTEXT_TOKENS = 8000  # 预估的最大上下文 token 数（保守估计）
+RESERVED_FOR_RESPONSE = 1000  # 预留给响应的 Token 数
+
+SYSTEM_PROMPT = """你是 DV-Agent，一个智能助手。你可以帮助用户解答问题、编写代码、分析数据等。
+请用中文回复，保持友好、专业的语气。如果不确定答案，请诚实地说明。"""
+
+# 上下文工程组件
+from ..context import ContextBuilder, get_token_counter
+
+# 调试开关（通过环境变量控制）
+import os
+DEBUG_LLM_CONTEXT = os.getenv("DEBUG_LLM_CONTEXT", "true").lower() in ("true", "1", "yes")
+
+
 async def generate_llm_response(
     session_id: str,
     user_id: str,
@@ -487,6 +503,11 @@ async def generate_llm_response(
 ):
     """
     异步生成 LLM 响应并通过 WebSocket 推送
+    
+    上下文管理策略:
+    1. 保留最近 N 条消息（滑动窗口）
+    2. 始终包含系统提示词
+    3. 简单的 token 估算（按字符数粗略估计）
     """
     import uuid
     import logging
@@ -499,6 +520,12 @@ async def generate_llm_response(
         # 导入 WebSocket 管理器
         from ..websocket.manager import ws_manager
         from ..websocket.models import WSMessage
+        
+        # DEBUG: 检查 WebSocket 连接状态
+        if DEBUG_LLM_CONTEXT:
+            ws_stats = ws_manager.get_stats()
+            print(f"🔌 WebSocket stats: {ws_stats}")
+            print(f"👤 Looking for user_id: '{user_id}' (type: {type(user_id).__name__})")
         
         # 发送 "正在思考" 状态
         await ws_manager.send_to_user(
@@ -544,21 +571,128 @@ async def generate_llm_response(
             gateway = LLMGateway(default_provider="openai")
             gateway.add_provider("openai", adapter)
             
+            # ===== 使用 GSSC 流水线构建上下文 =====
+            context_builder = ContextBuilder(
+                max_tokens=MAX_CONTEXT_TOKENS,
+                model_name=model,
+                reserved_for_response=RESERVED_FOR_RESPONSE,
+            )
+            
+            # Gather 阶段：收集上下文
+            context_builder.add_system_prompt(SYSTEM_PROMPT)
+            
+            # 获取会话历史
+            try:
+                session = await session_manager.get_session(session_id, touch=False)
+                history_messages = session.history.messages
+                
+                # 筛选用户和助手消息（排除工具调用等）
+                relevant_messages = [
+                    msg for msg in history_messages
+                    if msg.type in (MessageType.USER, MessageType.ASSISTANT)
+                ]
+                
+                # 滑动窗口：保留最近 N 条消息
+                if len(relevant_messages) > MAX_CONTEXT_MESSAGES:
+                    relevant_messages = relevant_messages[-MAX_CONTEXT_MESSAGES:]
+                
+                # 添加历史消息到 ContextBuilder
+                context_builder.add_history(
+                    relevant_messages,
+                    role_attr="type",
+                    content_attr="content",
+                )
+                
+            except Exception as history_error:
+                logger.warning(f"Failed to load history: {history_error}")
+            
+            # Build: 执行 Select + Structure + Compress
+            structured_context = context_builder.build(current_query=user_message)
+            
+            # 转换为 LLM Message 格式
+            context_messages: list[Message] = []
+            for msg in structured_context.messages:
+                role_str = msg.get("role", "user")
+                if role_str == "system":
+                    role = MessageRole.SYSTEM
+                elif role_str == "assistant":
+                    role = MessageRole.ASSISTANT
+                else:
+                    role = MessageRole.USER
+                context_messages.append(Message(role=role, content=msg["content"]))
+            
+            # 如果上下文为空，至少包含系统提示和当前消息
+            if len(context_messages) == 0:
+                context_messages = [
+                    Message(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT),
+                    Message(role=MessageRole.USER, content=user_message),
+                ]
+            
+            # 记录统计信息
+            logger.info(
+                f"Context built: {structured_context.packets_included} packets, "
+                f"{structured_context.total_tokens} tokens, "
+                f"{structured_context.packets_dropped} dropped"
+            )
+            
+            # ===== DEBUG: 输出完整的 LLM 请求内容 =====
+            if DEBUG_LLM_CONTEXT:
+                print("\n" + "=" * 70)
+                print("🔍 [DEBUG] LLM Request Context")
+                print("=" * 70)
+                print(f"📋 Session ID: {session_id}")
+                print(f"💬 User Message: {user_message}")
+                print(f"🤖 Model: {model}")
+                print(f"📊 Total Messages: {len(context_messages)}")
+                print(f"🔢 Total Tokens (estimated): {structured_context.total_tokens}")
+                print(f"📦 Packets: {structured_context.packets_included} included, {structured_context.packets_dropped} dropped")
+                print("-" * 70)
+                
+                for i, msg in enumerate(context_messages):
+                    role_name = msg.role.value if hasattr(msg.role, 'value') else str(msg.role)
+                    role_emoji = {"system": "⚙️", "user": "👤", "assistant": "🤖"}.get(role_name, "📝")
+                    
+                    print(f"\n{role_emoji} Message [{i}] - Role: {role_name.upper()}")
+                    print(f"   Length: {len(msg.content)} chars")
+                    print("-" * 50)
+                    
+                    # 打印完整内容（限制每条消息最多 1000 字符）
+                    content = msg.content
+                    if len(content) > 1000:
+                        content = content[:800] + f"\n... [truncated, {len(msg.content) - 800} more chars] ..."
+                    
+                    for line in content.split('\n'):
+                        print(f"   {line}")
+                    print("-" * 50)
+                
+                print("\n" + "=" * 70)
+                print("🔍 [DEBUG] End of LLM Request Context")
+                print("=" * 70 + "\n")
+            
+            # 日志记录
+            logger.info(f"📤 LLM Request: {len(context_messages)} messages, "
+                       f"~{structured_context.total_tokens} tokens, model={model}")
+            
             # 构建聊天请求
             llm_request = LLMRequest(
-                messages=[
-                    Message(role=MessageRole.USER, content=user_message)
-                ],
+                messages=context_messages,
                 stream=True,
                 model=model,
             )
             
             # 流式生成响应
+            chunk_count = 0
             async for chunk in gateway.stream(llm_request):
                 if chunk.content:
+                    chunk_count += 1
                     response_content += chunk.content
+                    
+                    # DEBUG: 打印每个 chunk
+                    if DEBUG_LLM_CONTEXT and chunk_count <= 5:
+                        print(f"📨 Stream chunk [{chunk_count}]: '{chunk.content[:50]}...' " if len(chunk.content) > 50 else f"📨 Stream chunk [{chunk_count}]: '{chunk.content}'")
+                    
                     # 推送流式内容
-                    await ws_manager.send_to_user(
+                    sent = await ws_manager.send_to_user(
                         user_id,
                         WSMessage(
                             type="agent.stream",
@@ -569,6 +703,14 @@ async def generate_llm_response(
                             }
                         )
                     )
+                    
+                    # DEBUG: 确认 WebSocket 发送
+                    if DEBUG_LLM_CONTEXT and chunk_count <= 5:
+                        print(f"   ✅ Sent to {sent} WebSocket connection(s)")
+            
+            # DEBUG: 流式完成统计
+            if DEBUG_LLM_CONTEXT:
+                print(f"📊 Stream complete: {chunk_count} chunks, {len(response_content)} chars")
             
         except Exception as llm_error:
             logger.warning(f"LLM call failed: {llm_error}, using fallback response")

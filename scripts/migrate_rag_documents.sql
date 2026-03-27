@@ -1,28 +1,11 @@
--- RAG Document Tables Migration
--- 文档存储相关表结构
-
--- ==================== Collections Table ====================
--- 文档集合（用于组织文档）
-
-CREATE TABLE IF NOT EXISTS collections (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id VARCHAR(64) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    metadata JSONB DEFAULT '{}',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Constraints
-    CONSTRAINT unique_tenant_collection_name UNIQUE (tenant_id, name)
-);
-
--- Index for fast tenant-based lookups
-CREATE INDEX IF NOT EXISTS idx_collections_tenant_id ON collections(tenant_id);
-
--- Comment
-COMMENT ON TABLE collections IS 'RAG document collections for organizing documents';
-
+-- RAG Documents Migration Script
+-- 创建/更新 RAG 文档相关表结构
+-- 
+-- 运行方式:
+--   psql -h localhost -U postgres -d dv_agent -f scripts/migrate_rag_documents.sql
+--
+-- 或者使用 Python:
+--   python scripts/migrate_rag_documents.py
 
 -- ==================== Documents Table ====================
 -- 存储文档元数据（与代码中的字段名匹配）
@@ -123,7 +106,7 @@ COMMENT ON TABLE document_chunks IS 'Document chunks for RAG retrieval';
 CREATE OR REPLACE FUNCTION update_chunk_tsv()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- 使用中文分词配置（如果可用）或默认配置
+    -- 使用简单分词配置
     NEW.content_tsv := to_tsvector('simple', COALESCE(NEW.content, ''));
     RETURN NEW;
 END;
@@ -137,7 +120,7 @@ CREATE TRIGGER trigger_chunk_tsv_update
 
 
 -- ==================== Trigger for Updated At ====================
--- 自动更新 updated_at 字段
+-- 自动更新 documents.updated_at 字段
 
 CREATE OR REPLACE FUNCTION update_documents_updated_at()
 RETURNS TRIGGER AS $$
@@ -161,8 +144,8 @@ CREATE OR REPLACE VIEW tenant_storage_stats AS
 SELECT 
     tenant_id,
     COUNT(*) AS document_count,
-    SUM(file_size) AS total_size_bytes,
-    SUM(file_size) / 1024 / 1024 AS total_size_mb,
+    COALESCE(SUM(file_size), 0) AS total_size_bytes,
+    COALESCE(SUM(file_size), 0) / 1024 / 1024 AS total_size_mb,
     COUNT(*) FILTER (WHERE status = 'completed') AS completed_count,
     COUNT(*) FILTER (WHERE status = 'processing') AS processing_count,
     COUNT(*) FILTER (WHERE status = 'failed') AS failed_count
@@ -206,8 +189,8 @@ $$ LANGUAGE plpgsql;
 -- ==================== Print Success Message ====================
 DO $$
 BEGIN
-    RAISE NOTICE '✅ RAG tables initialized successfully!';
-    RAISE NOTICE 'Tables: collections, documents, document_chunks';
-    RAISE NOTICE 'Views: tenant_storage_stats';
-    RAISE NOTICE 'Functions: search_document_chunks';
+    RAISE NOTICE '✅ RAG documents migration completed successfully!';
+    RAISE NOTICE 'Tables created/updated: documents, document_chunks';
+    RAISE NOTICE 'Views created: tenant_storage_stats';
+    RAISE NOTICE 'Functions created: search_document_chunks, update_chunk_tsv, update_documents_updated_at';
 END $$;

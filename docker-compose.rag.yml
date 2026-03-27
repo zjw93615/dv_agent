@@ -95,7 +95,8 @@ services:
       - rag-network
 
   milvus:
-    image: milvusdb/milvus:v2.3.4
+    # 升级到 v2.4.x 以支持稀疏向量 (SPARSE_FLOAT_VECTOR)
+    image: milvusdb/milvus:v2.4.5
     container_name: dv-agent-milvus
     command: ["milvus", "run", "standalone"]
     depends_on:
@@ -123,7 +124,8 @@ services:
 
   # Milvus Web UI (可选)
   attu:
-    image: zilliz/attu:v2.3.4
+    # 升级 Attu 以匹配 Milvus v2.4.x
+    image: zilliz/attu:v2.4
     container_name: dv-agent-attu
     depends_on:
       - milvus

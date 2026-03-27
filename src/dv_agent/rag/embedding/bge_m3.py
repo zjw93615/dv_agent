@@ -322,17 +322,27 @@ class BGEM3Embedder:
         if uncached_texts:
             self._load_model()
             
+            total_batches = (len(uncached_texts) + batch_size - 1) // batch_size
+            logger.info(f"[EMBEDDING] 开始批量嵌入: {len(uncached_texts)} 文本, {total_batches} 批次")
+            
             # 分批处理
             for batch_start in range(0, len(uncached_texts), batch_size):
                 batch_end = min(batch_start + batch_size, len(uncached_texts))
                 batch_texts = uncached_texts[batch_start:batch_end]
+                batch_num = batch_start // batch_size + 1
                 
+                logger.info(f"[EMBEDDING] 处理批次 {batch_num}/{total_batches} ({len(batch_texts)} 文本)...")
+                
+                import time
+                encode_start = time.time()
                 outputs = self._model.encode(
                     batch_texts,
                     return_dense=return_dense,
                     return_sparse=return_sparse,
                     max_length=self.max_length,
                 )
+                encode_time = time.time() - encode_start
+                logger.info(f"[EMBEDDING] 批次 {batch_num} 完成, 耗时: {encode_time:.2f}s")
                 
                 for j, text in enumerate(batch_texts):
                     result = EmbeddingResult(text=text)

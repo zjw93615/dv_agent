@@ -79,6 +79,10 @@ class MilvusDocumentStore:
             )
             self._connected = True
             logger.info(f"Connected to Milvus: {self.host}:{self.port}")
+            
+            # 确保 collections 存在
+            self._ensure_collections()
+            
             return True
         except ImportError:
             raise ImportError(
@@ -93,6 +97,100 @@ class MilvusDocumentStore:
         if not self._connected:
             self.connect()
     
+    def _ensure_collections(self):
+        """确保必要的 collections 存在"""
+        from pymilvus import utility
+        
+        # 检查并创建 dense collection
+        if not utility.has_collection(self.dense_collection, using=self.alias):
+            logger.info(f"Creating dense collection: {self.dense_collection}")
+            self._create_dense_collection()
+        else:
+            logger.debug(f"Dense collection exists: {self.dense_collection}")
+        
+        # 检查并创建 sparse collection
+        if not utility.has_collection(self.sparse_collection, using=self.alias):
+            logger.info(f"Creating sparse collection: {self.sparse_collection}")
+            self._create_sparse_collection()
+        else:
+            logger.debug(f"Sparse collection exists: {self.sparse_collection}")
+    
+    def _create_dense_collection(self):
+        """创建稠密向量集合"""
+        from pymilvus import (
+            Collection, CollectionSchema, FieldSchema, DataType
+        )
+        
+        fields = [
+            # chunk_id 使用 VARCHAR 存储 UUID 字符串
+            FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=64, is_primary=True),
+            FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="tenant_id", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=self.DENSE_DIM),
+        ]
+        
+        schema = CollectionSchema(
+            fields=fields,
+            description="Document dense embeddings (BGE-M3)",
+        )
+        
+        collection = Collection(
+            name=self.dense_collection,
+            schema=schema,
+            using=self.alias,
+        )
+        
+        # 创建索引
+        index_params = {
+            "metric_type": "COSINE",
+            "index_type": "HNSW",
+            "params": {"M": 16, "efConstruction": 256},
+        }
+        collection.create_index(field_name="embedding", index_params=index_params)
+        
+        # 加载集合
+        collection.load()
+        
+        logger.info(f"Created and loaded dense collection: {self.dense_collection}")
+    
+    def _create_sparse_collection(self):
+        """创建稀疏向量集合"""
+        from pymilvus import (
+            Collection, CollectionSchema, FieldSchema, DataType
+        )
+        
+        fields = [
+            # chunk_id 使用 VARCHAR 存储 UUID 字符串
+            FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=64, is_primary=True),
+            FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="tenant_id", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="sparse_embedding", dtype=DataType.SPARSE_FLOAT_VECTOR),
+        ]
+        
+        schema = CollectionSchema(
+            fields=fields,
+            description="Document sparse embeddings (BM25)",
+        )
+        
+        collection = Collection(
+            name=self.sparse_collection,
+            schema=schema,
+            using=self.alias,
+        )
+        
+        # 创建稀疏向量索引
+        index_params = {
+            "metric_type": "IP",
+            "index_type": "SPARSE_INVERTED_INDEX",
+            "params": {"drop_ratio_build": 0.2},
+        }
+        collection.create_index(field_name="sparse_embedding", index_params=index_params)
+        
+        # 加载集合
+        collection.load()
+        
+        logger.info(f"Created and loaded sparse collection: {self.sparse_collection}")
+    
     def _get_collection(self, name: str):
         """获取集合"""
         from pymilvus import Collection
@@ -104,7 +202,7 @@ class MilvusDocumentStore:
     
     def insert_dense_vectors(
         self,
-        chunk_ids: list[int],
+        chunk_ids: list,
         doc_ids: list[str],
         vectors: list[list[float]],
         tenant_ids: list[str],
@@ -113,7 +211,7 @@ class MilvusDocumentStore:
         插入稠密向量
         
         Args:
-            chunk_ids: 块ID列表
+            chunk_ids: 块ID列表 (UUID 或字符串)
             doc_ids: 文档ID列表
             vectors: 向量列表
             tenant_ids: 租户ID列表
@@ -124,8 +222,11 @@ class MilvusDocumentStore:
         collection = self._get_collection(self.dense_collection)
         
         try:
+            # 将 chunk_ids 转换为字符串（支持 UUID）
+            chunk_id_strs = [str(cid) for cid in chunk_ids]
+            
             data = [
-                chunk_ids,
+                chunk_id_strs,
                 doc_ids,
                 tenant_ids,
                 vectors,
@@ -219,7 +320,7 @@ class MilvusDocumentStore:
     
     def insert_sparse_vectors(
         self,
-        chunk_ids: list[int],
+        chunk_ids: list,
         doc_ids: list[str],
         vectors: list[dict],
         tenant_ids: list[str],
@@ -228,7 +329,7 @@ class MilvusDocumentStore:
         插入稀疏向量
         
         Args:
-            chunk_ids: 块ID列表
+            chunk_ids: 块ID列表 (UUID 或字符串)
             doc_ids: 文档ID列表
             vectors: 稀疏向量列表（dict 格式）
             tenant_ids: 租户ID列表
@@ -239,11 +340,31 @@ class MilvusDocumentStore:
         collection = self._get_collection(self.sparse_collection)
         
         try:
+            # 将 chunk_ids 转换为字符串（支持 UUID）
+            chunk_id_strs = [str(cid) for cid in chunk_ids]
+            
+            # 转换稀疏向量格式：确保 key 是整数，value 是浮点数
+            # Milvus SPARSE_FLOAT_VECTOR 格式: {int_index: float_value, ...}
+            formatted_vectors = []
+            for vec in vectors:
+                if isinstance(vec, dict) and vec:
+                    # 确保 key 是整数，value 是浮点数
+                    formatted_vec = {int(k): float(v) for k, v in vec.items()}
+                    formatted_vectors.append(formatted_vec)
+                else:
+                    # 空向量或无效格式，跳过（不应该到这里，因为已经在 insert_vectors 中过滤了）
+                    logger.warning(f"Invalid sparse vector format: {type(vec)}")
+                    continue
+            
+            if not formatted_vectors:
+                logger.warning("No valid sparse vectors after formatting")
+                return 0
+            
             data = [
-                chunk_ids,
-                doc_ids,
-                tenant_ids,
-                vectors,
+                chunk_id_strs[:len(formatted_vectors)],
+                doc_ids[:len(formatted_vectors)],
+                tenant_ids[:len(formatted_vectors)],
+                formatted_vectors,
             ]
             
             result = collection.insert(data)
@@ -331,7 +452,7 @@ class MilvusDocumentStore:
     
     def insert_vectors(
         self,
-        chunk_ids: list[int],
+        chunk_ids: list,
         doc_ids: list[str],
         dense_vectors: list[list[float]],
         sparse_vectors: list[dict],
@@ -341,7 +462,7 @@ class MilvusDocumentStore:
         同时插入稠密和稀疏向量
         
         Args:
-            chunk_ids: 块ID列表
+            chunk_ids: 块ID列表 (UUID 或字符串)
             doc_ids: 文档ID列表
             dense_vectors: 稠密向量列表
             sparse_vectors: 稀疏向量列表
@@ -350,12 +471,31 @@ class MilvusDocumentStore:
         Returns:
             (稠密插入数, 稀疏插入数)
         """
+        # 插入稠密向量
         dense_count = self.insert_dense_vectors(
             chunk_ids, doc_ids, dense_vectors, tenant_ids
         )
-        sparse_count = self.insert_sparse_vectors(
-            chunk_ids, doc_ids, sparse_vectors, tenant_ids
-        )
+        
+        # 过滤掉空的稀疏向量，只插入有效的
+        # 注意：需要 Milvus v2.4+ 以支持 SPARSE_FLOAT_VECTOR
+        valid_sparse_data = [
+            (cid, did, vec, tid)
+            for cid, did, vec, tid in zip(chunk_ids, doc_ids, sparse_vectors, tenant_ids)
+            if vec and len(vec) > 0  # 只保留非空的稀疏向量
+        ]
+        
+        sparse_count = 0
+        if valid_sparse_data:
+            valid_chunk_ids = [d[0] for d in valid_sparse_data]
+            valid_doc_ids = [d[1] for d in valid_sparse_data]
+            valid_vectors = [d[2] for d in valid_sparse_data]
+            valid_tenant_ids = [d[3] for d in valid_sparse_data]
+            
+            sparse_count = self.insert_sparse_vectors(
+                valid_chunk_ids, valid_doc_ids, valid_vectors, valid_tenant_ids
+            )
+        else:
+            logger.debug("No valid sparse vectors to insert (all empty)")
         
         return dense_count, sparse_count
     

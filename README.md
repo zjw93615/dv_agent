@@ -521,6 +521,89 @@ docker exec -i dv-agent-postgres psql -U postgres -d dv_agent < scripts/init_use
 docker exec -i dv-agent-postgres psql -U postgres -d dv_agent < scripts/init_rag_postgres.sql
 ```
 
+#### 数据库迁移
+
+当项目更新需要修改数据库结构时，需要运行迁移脚本：
+
+**方式 1：使用 Python 脚本（推荐）**
+
+```bash
+# 进入项目目录，激活虚拟环境
+cd dv-agent
+venv\Scripts\activate  # Windows
+source venv/bin/activate  # Linux/Mac
+
+# 运行迁移脚本（自动执行所有新迁移）
+python scripts/run_migration.py
+```
+
+迁移脚本会自动：
+- 连接数据库
+- 查找 `migrations/` 目录下的所有 `.sql` 文件
+- 按文件名顺序执行
+- 跳过已存在的表/索引
+
+**方式 2：手动执行 SQL**
+
+```bash
+# 在 Docker 中执行
+docker exec -i dv-agent-postgres psql -U postgres -d dv_agent < migrations/003_add_collections_table.sql
+
+# 或使用 psql 直接连接
+psql -h localhost -U postgres -d dv_agent -f migrations/003_add_collections_table.sql
+```
+
+**迁移文件列表：**
+
+| 文件 | 说明 |
+|------|------|
+| `003_add_collections_table.sql` | RAG 文档集合表 |
+| `scripts/migrate_rag_documents.py` | RAG 文档和文档块表 |
+
+> ⚠️ **注意**：每次 `git pull` 更新代码后，检查 `migrations/` 目录是否有新文件，如有则需要运行迁移。
+
+#### RAG 文档表初始化
+
+RAG 功能需要额外的文档存储表。首次使用 RAG 功能前，需要运行以下迁移：
+
+**方式 1：使用 Python 脚本（推荐）**
+
+```bash
+# 进入项目目录，激活虚拟环境
+cd dv-agent
+venv\Scripts\activate  # Windows
+source venv/bin/activate  # Linux/Mac
+
+# 运行 RAG 文档表迁移脚本
+python scripts/migrate_rag_documents.py
+```
+
+脚本会自动：
+- 创建 `documents` 表（存储文档元数据）
+- 创建 `document_chunks` 表（存储文档分块）
+- 创建必要的索引和触发器
+- 跳过已存在的表
+
+**方式 2：使用 SQL 脚本**
+
+```bash
+# 在 Docker 中执行
+docker exec -i dv-agent-postgres psql -U postgres -d dv_agent < scripts/migrate_rag_documents.sql
+
+# 或使用 psql 直接连接
+psql -h localhost -U postgres -d dv_agent -f scripts/migrate_rag_documents.sql
+```
+
+**RAG 相关表结构：**
+
+| 表名 | 说明 |
+|------|------|
+| `collections` | 文档集合（用于组织文档） |
+| `documents` | 文档元数据（文件名、大小、状态等） |
+| `document_chunks` | 文档分块（用于向量检索） |
+
+> 💡 **提示**：如果前端创建集合后刷新页面看不到数据，可能是因为 `documents` 表未创建。运行上述迁移脚本即可修复。
+
 ### Milvus 向量数据库
 
 Milvus 用于存储和检索向量嵌入。

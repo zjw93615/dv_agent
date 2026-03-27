@@ -23,6 +23,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
+from ..auth.dependencies import get_current_user
+from ..auth.models import User
+
 logger = logging.getLogger(__name__)
 
 # ============ Request/Response Models ============
@@ -218,9 +221,9 @@ router = APIRouter(prefix="/rag", tags=["RAG"])
 )
 async def upload_document(
     file: UploadFile = File(...),
-    tenant_id: str = Form(...),
     collection_id: Optional[str] = Form(default=None),
     metadata: Optional[str] = Form(default=None),  # JSON string
+    current_user: User = Depends(get_current_user),
     document_manager = Depends(get_document_manager),
 ):
     """
@@ -229,13 +232,14 @@ async def upload_document(
     支持的文件类型：PDF, DOCX, TXT, MD, HTML
     
     - **file**: 上传的文件
-    - **tenant_id**: 租户 ID
     - **collection_id**: 集合 ID（可选）
     - **metadata**: 元数据 JSON 字符串（可选）
     """
     import json
     
     try:
+        tenant_id = str(current_user.id)
+        
         # 解析元数据
         extra_metadata = {}
         if metadata:
@@ -264,14 +268,25 @@ async def upload_document(
             metadata=extra_metadata,
         )
         
+        # 检查上传是否成功
+        if not result.get("success", False):
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error", "Upload failed")
+            )
+        
+        # 获取文档详情
+        doc_id = result.get("doc_id")
+        doc_info = await document_manager.get_document(doc_id, tenant_id)
+        
         return DocumentUploadResponse(
-            document_id=result.document_id,
-            filename=result.filename,
-            file_type=result.file_type,
-            file_size=result.file_size,
-            chunk_count=result.chunk_count,
-            status=result.status,
-            created_at=result.created_at,
+            document_id=doc_id,
+            filename=doc_info.get("filename", file.filename) if doc_info else file.filename,
+            file_type=doc_info.get("file_type", "") if doc_info else "",
+            file_size=len(content),
+            chunk_count=0,  # 异步处理时还未生成分块
+            status=result.get("status", "queued"),
+            created_at=doc_info.get("created_at") if doc_info else None,
         )
         
     except HTTPException:
@@ -292,16 +307,16 @@ async def upload_document(
 )
 async def get_document(
     document_id: str,
-    tenant_id: str = Query(...),
+    current_user: User = Depends(get_current_user),
     document_manager = Depends(get_document_manager),
 ):
     """
     获取文档详情
     
     - **document_id**: 文档 ID
-    - **tenant_id**: 租户 ID
     """
     try:
+        tenant_id = str(current_user.id)
         doc = await document_manager.get_document(
             document_id=document_id,
             tenant_id=tenant_id,
@@ -339,18 +354,23 @@ async def get_document(
 )
 async def delete_document(
     document_id: str,
-    tenant_id: str = Query(...),
+    current_user: User = Depends(get_current_user),
     document_manager = Depends(get_document_manager),
 ):
     """
     删除文档
     
     - **document_id**: 文档 ID
-    - **tenant_id**: 租户 ID
     """
     try:
+        tenant_id = str(current_user.id)
+        
+        # 验证 document_id 是否有效
+        if not document_id or document_id == "undefined":
+            raise HTTPException(status_code=400, detail="Invalid document ID")
+        
         success = await document_manager.delete_document(
-            document_id=document_id,
+            doc_id=document_id,
             tenant_id=tenant_id,
         )
         
@@ -371,21 +391,21 @@ async def delete_document(
     response_model=DocumentListResponse,
 )
 async def list_documents(
-    tenant_id: str = Query(...),
     collection_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
     document_manager = Depends(get_document_manager),
 ):
     """
     列出文档
     
-    - **tenant_id**: 租户 ID
     - **collection_id**: 集合 ID（可选）
     - **page**: 页码
     - **page_size**: 每页数量
     """
     try:
+        tenant_id = str(current_user.id)
         offset = (page - 1) * page_size
         
         docs, total = await document_manager.list_documents(
@@ -395,20 +415,34 @@ async def list_documents(
             limit=page_size,
         )
         
+        def parse_metadata(meta):
+            """解析 metadata，处理字符串或字典"""
+            if meta is None:
+                return {}
+            if isinstance(meta, dict):
+                return meta
+            if isinstance(meta, str):
+                try:
+                    import json
+                    return json.loads(meta)
+                except (json.JSONDecodeError, TypeError):
+                    return {}
+            return {}
+        
         return DocumentListResponse(
             documents=[
                 DocumentInfo(
-                    document_id=doc.document_id,
-                    tenant_id=doc.tenant_id,
-                    collection_id=doc.collection_id,
-                    filename=doc.filename,
-                    file_type=doc.file_type,
-                    file_size=doc.file_size,
-                    chunk_count=doc.chunk_count,
-                    status=doc.status,
-                    created_at=doc.created_at,
-                    updated_at=doc.updated_at,
-                    metadata=doc.metadata or {},
+                    document_id=doc.get("doc_id", ""),
+                    tenant_id=doc.get("tenant_id", ""),
+                    collection_id=doc.get("collection_id"),
+                    filename=doc.get("filename", ""),
+                    file_type=doc.get("file_type", ""),
+                    file_size=doc.get("file_size", 0),
+                    chunk_count=doc.get("chunk_count", 0),
+                    status=doc.get("status", "pending"),
+                    created_at=doc.get("created_at"),
+                    updated_at=doc.get("updated_at"),
+                    metadata=parse_metadata(doc.get("metadata")),
                 )
                 for doc in docs
             ],
@@ -430,7 +464,7 @@ async def list_documents(
 )
 async def search_documents(
     request: SearchRequest,
-    tenant_id: str = Query(...),
+    current_user: User = Depends(get_current_user),
     retriever = Depends(get_retriever),
 ):
     """
@@ -445,6 +479,8 @@ async def search_documents(
     from ..retrieval import RetrievalQuery, SearchMode
     
     try:
+        tenant_id = str(current_user.id)
+        
         # 构建查询
         mode_map = {
             "dense": SearchMode.DENSE_ONLY,
@@ -504,9 +540,9 @@ async def search_documents(
 )
 async def simple_search(
     query: str = Query(..., min_length=1, max_length=2000),
-    tenant_id: str = Query(...),
     collection_id: Optional[str] = Query(default=None),
     top_k: int = Query(default=10, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
     retriever = Depends(get_retriever),
 ):
     """
@@ -515,6 +551,7 @@ async def simple_search(
     便捷的检索接口，使用默认配置。
     """
     try:
+        tenant_id = str(current_user.id)
         response = await retriever.simple_search(
             query=query,
             tenant_id=tenant_id,
@@ -558,15 +595,14 @@ async def simple_search(
     response_model=CollectionListResponse,
 )
 async def list_collections(
-    tenant_id: str = Query(...),
+    current_user: User = Depends(get_current_user),
     document_manager = Depends(get_document_manager),
 ):
     """
-    列出集合
-    
-    - **tenant_id**: 租户 ID
+    列出当前用户的集合
     """
     try:
+        tenant_id = str(current_user.id)
         collections = await document_manager.list_collections(tenant_id=tenant_id)
         
         return CollectionListResponse(
@@ -597,7 +633,7 @@ async def list_collections(
 )
 async def create_collection(
     request: CollectionCreateRequest,
-    tenant_id: str = Query(...),
+    current_user: User = Depends(get_current_user),
     document_manager = Depends(get_document_manager),
 ):
     """
@@ -608,6 +644,7 @@ async def create_collection(
     - **metadata**: 元数据（可选）
     """
     try:
+        tenant_id = str(current_user.id)
         collection = await document_manager.create_collection(
             tenant_id=tenant_id,
             name=request.name,
@@ -636,18 +673,18 @@ async def create_collection(
 )
 async def delete_collection(
     collection_id: str,
-    tenant_id: str = Query(...),
     delete_documents: bool = Query(default=False, description="是否同时删除集合中的文档"),
+    current_user: User = Depends(get_current_user),
     document_manager = Depends(get_document_manager),
 ):
     """
     删除集合
     
     - **collection_id**: 集合 ID
-    - **tenant_id**: 租户 ID
     - **delete_documents**: 是否同时删除集合中的文档
     """
     try:
+        tenant_id = str(current_user.id)
         success = await document_manager.delete_collection(
             collection_id=collection_id,
             tenant_id=tenant_id,
@@ -676,3 +713,5 @@ async def health_check():
         "service": "rag",
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+

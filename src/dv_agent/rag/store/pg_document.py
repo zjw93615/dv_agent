@@ -35,17 +35,36 @@ class PostgresDocumentStore:
         self,
         connection_string: Optional[str] = None,
         pool: Any = None,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        database: Optional[str] = None,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
     ):
         """
         初始化存储
         
         Args:
-            connection_string: PostgreSQL 连接字符串
+            connection_string: PostgreSQL 连接字符串（优先使用）
             pool: 连接池（可选）
+            host: 数据库主机
+            port: 数据库端口
+            database: 数据库名
+            user: 用户名
+            password: 密码
         """
-        self.connection_string = connection_string
+        # 如果提供了独立参数，构建连接字符串
+        if connection_string:
+            self.connection_string = connection_string
+        elif host and database and user:
+            port = port or 5432
+            self.connection_string = f"postgresql://{user}:{password or ''}@{host}:{port}/{database}"
+        else:
+            self.connection_string = None
+        
         self._pool = pool
         self._conn = None
+        self._initialized = False
     
     async def _get_connection(self):
         """获取数据库连接"""
@@ -67,6 +86,36 @@ class PostgresDocumentStore:
         """释放连接"""
         if self._pool:
             await self._pool.release(conn)
+    
+    async def initialize(self):
+        """
+        初始化存储连接
+        
+        测试数据库连接是否正常工作。
+        """
+        if self._initialized:
+            return
+        
+        if not self.connection_string:
+            raise ValueError("No connection string configured. Provide either connection_string or host/database/user parameters.")
+        
+        try:
+            conn = await self._get_connection()
+            # 测试连接
+            await conn.execute("SELECT 1")
+            self._initialized = True
+            logger.info("PostgreSQL document store initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize PostgreSQL store: {e}")
+            raise
+    
+    async def close(self):
+        """关闭存储连接"""
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+        self._initialized = False
+        logger.info("PostgreSQL document store closed")
     
     # ==================== 文档操作 ====================
     
@@ -104,21 +153,23 @@ class PostgresDocumentStore:
         conn = await self._get_connection()
         
         try:
+            now = datetime.utcnow()
             row = await conn.fetchrow(
                 """
                 INSERT INTO documents (
                     doc_id, tenant_id, filename, file_type, file_size,
                     content_hash, storage_path, collection_id, title,
                     status, metadata, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 RETURNING *
                 """,
                 doc_id, tenant_id, filename, file_type, file_size,
                 content_hash, storage_path, collection_id, title,
                 DocumentStatus.PENDING.value,
                 json.dumps(metadata or {}),
-                datetime.utcnow(),
+                now, now,
             )
+            logger.info(f"Document created: {doc_id}, filename: {filename}")
             
             return dict(row) if row else None
         except Exception as e:
@@ -334,6 +385,7 @@ class PostgresDocumentStore:
         self,
         doc_id: str,
         chunks: list[dict],
+        tenant_id: Optional[str] = None,
     ) -> int:
         """
         批量创建文档块
@@ -341,6 +393,7 @@ class PostgresDocumentStore:
         Args:
             doc_id: 文档ID
             chunks: 块列表，每个包含 chunk_index, content, page_number, metadata
+            tenant_id: 租户ID（如果不提供，将从文档记录中获取）
             
         Returns:
             创建的块数量
@@ -351,10 +404,23 @@ class PostgresDocumentStore:
         conn = await self._get_connection()
         
         try:
+            # 如果没有提供 tenant_id，从文档记录中获取
+            if not tenant_id:
+                doc = await conn.fetchrow(
+                    "SELECT tenant_id FROM documents WHERE doc_id = $1",
+                    doc_id
+                )
+                if doc:
+                    tenant_id = doc["tenant_id"]
+                else:
+                    logger.error(f"Document {doc_id} not found, cannot create chunks")
+                    return 0
+            
             # 使用 executemany
             values = [
                 (
                     doc_id,
+                    tenant_id,
                     chunk.get("chunk_index", i),
                     chunk.get("content", ""),
                     chunk.get("page_number"),
@@ -367,8 +433,8 @@ class PostgresDocumentStore:
             await conn.executemany(
                 """
                 INSERT INTO document_chunks (
-                    doc_id, chunk_index, content, page_number, metadata, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6)
+                    doc_id, tenant_id, chunk_index, content, page_number, metadata, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
                 values
             )
@@ -485,6 +551,278 @@ class PostgresDocumentStore:
         except Exception as e:
             logger.error(f"Failed to count chunks: {e}")
             return 0
+        finally:
+            await self._release_connection(conn)
+    
+    # ==================== 集合操作 ====================
+    
+    async def list_collections(
+        self,
+        tenant_id: str,
+    ) -> list:
+        """
+        列出集合
+        
+        Args:
+            tenant_id: 租户ID
+            
+        Returns:
+            集合列表
+        """
+        conn = await self._get_connection()
+        
+        try:
+            # 先检查 documents 表是否存在
+            table_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' AND table_name = 'documents'
+                )
+            """)
+            
+            if table_exists:
+                # 完整查询（包含文档统计）
+                rows = await conn.fetch(
+                    """
+                    SELECT 
+                        c.id as collection_id,
+                        c.tenant_id,
+                        c.name,
+                        c.description,
+                        c.created_at,
+                        c.metadata,
+                        COUNT(DISTINCT d.doc_id) as document_count,
+                        COALESCE(SUM(dc.chunk_count), 0) as chunk_count
+                    FROM collections c
+                    LEFT JOIN documents d ON c.id::text = d.collection_id AND c.tenant_id = d.tenant_id
+                    LEFT JOIN (
+                        SELECT doc_id, COUNT(*) as chunk_count 
+                        FROM document_chunks 
+                        GROUP BY doc_id
+                    ) dc ON d.doc_id = dc.doc_id
+                    WHERE c.tenant_id = $1
+                    GROUP BY c.id, c.tenant_id, c.name, c.description, c.created_at, c.metadata
+                    ORDER BY c.created_at DESC
+                    """,
+                    tenant_id
+                )
+            else:
+                # 简化查询（不统计文档数量）
+                rows = await conn.fetch(
+                    """
+                    SELECT 
+                        c.id as collection_id,
+                        c.tenant_id,
+                        c.name,
+                        c.description,
+                        c.created_at,
+                        c.metadata,
+                        0 as document_count,
+                        0 as chunk_count
+                    FROM collections c
+                    WHERE c.tenant_id = $1
+                    ORDER BY c.created_at DESC
+                    """,
+                    tenant_id
+                )
+            
+            from dataclasses import dataclass
+            from typing import Optional
+            
+            @dataclass
+            class CollectionRecord:
+                collection_id: str
+                tenant_id: str
+                name: str
+                description: Optional[str]
+                document_count: int
+                chunk_count: int
+                created_at: datetime
+                metadata: dict
+            
+            result = []
+            for row in rows:
+                metadata = row["metadata"]
+                if isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+                
+                result.append(CollectionRecord(
+                    collection_id=str(row["collection_id"]),
+                    tenant_id=row["tenant_id"],
+                    name=row["name"],
+                    description=row["description"],
+                    document_count=row["document_count"],
+                    chunk_count=row["chunk_count"],
+                    created_at=row["created_at"],
+                    metadata=metadata or {},
+                ))
+            
+            logger.info(f"list_collections: found {len(result)} collections for tenant {tenant_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to list collections: {e}", exc_info=True)
+            return []
+        finally:
+            await self._release_connection(conn)
+    
+    async def create_collection(
+        self,
+        collection_id: str,
+        tenant_id: str,
+        name: str,
+        description: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ):
+        """
+        创建集合
+        
+        Args:
+            collection_id: 集合ID
+            tenant_id: 租户ID
+            name: 集合名称
+            description: 集合描述
+            metadata: 元数据
+            
+        Returns:
+            集合记录
+        """
+        conn = await self._get_connection()
+        
+        try:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO collections (id, tenant_id, name, description, metadata, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING *
+                """,
+                collection_id, tenant_id, name, description,
+                json.dumps(metadata or {}),
+                datetime.utcnow(),
+            )
+            
+            if not row:
+                return None
+            
+            from dataclasses import dataclass
+            from typing import Optional
+            
+            @dataclass
+            class CollectionRecord:
+                collection_id: str
+                tenant_id: str
+                name: str
+                description: Optional[str]
+                document_count: int
+                chunk_count: int
+                created_at: datetime
+                metadata: dict
+            
+            metadata_val = row["metadata"]
+            if isinstance(metadata_val, str):
+                metadata_val = json.loads(metadata_val)
+            
+            return CollectionRecord(
+                collection_id=str(row["id"]),
+                tenant_id=row["tenant_id"],
+                name=row["name"],
+                description=row["description"],
+                document_count=0,
+                chunk_count=0,
+                created_at=row["created_at"],
+                metadata=metadata_val or {},
+            )
+        except Exception as e:
+            logger.error(f"Failed to create collection: {e}")
+            return None
+        finally:
+            await self._release_connection(conn)
+    
+    async def get_collection(
+        self,
+        collection_id: str,
+        tenant_id: str,
+    ):
+        """
+        获取集合
+        
+        Args:
+            collection_id: 集合ID
+            tenant_id: 租户ID
+            
+        Returns:
+            集合记录
+        """
+        conn = await self._get_connection()
+        
+        try:
+            row = await conn.fetchrow(
+                "SELECT * FROM collections WHERE id = $1 AND tenant_id = $2",
+                collection_id, tenant_id
+            )
+            
+            if not row:
+                return None
+            
+            from dataclasses import dataclass
+            from typing import Optional
+            
+            @dataclass
+            class CollectionRecord:
+                collection_id: str
+                tenant_id: str
+                name: str
+                description: Optional[str]
+                document_count: int
+                chunk_count: int
+                created_at: datetime
+                metadata: dict
+            
+            metadata = row["metadata"]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            
+            return CollectionRecord(
+                collection_id=str(row["id"]),
+                tenant_id=row["tenant_id"],
+                name=row["name"],
+                description=row["description"],
+                document_count=0,
+                chunk_count=0,
+                created_at=row["created_at"],
+                metadata=metadata or {},
+            )
+        except Exception as e:
+            logger.error(f"Failed to get collection {collection_id}: {e}")
+            return None
+        finally:
+            await self._release_connection(conn)
+    
+    async def delete_collection(
+        self,
+        collection_id: str,
+        tenant_id: str,
+    ) -> bool:
+        """
+        删除集合
+        
+        Args:
+            collection_id: 集合ID
+            tenant_id: 租户ID
+            
+        Returns:
+            是否成功
+        """
+        conn = await self._get_connection()
+        
+        try:
+            result = await conn.execute(
+                "DELETE FROM collections WHERE id = $1 AND tenant_id = $2",
+                collection_id, tenant_id
+            )
+            return "DELETE" in result
+        except Exception as e:
+            logger.error(f"Failed to delete collection {collection_id}: {e}")
+            return False
         finally:
             await self._release_connection(conn)
     

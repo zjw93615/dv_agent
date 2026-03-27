@@ -147,10 +147,13 @@ async def init_rag_components():
         
         # Initialize Milvus document store (sync connect)
         milvus_store = None
+        milvus_host = os.getenv("MILVUS_HOST", "localhost")
+        milvus_port = int(os.getenv("MILVUS_PORT", "19530"))
         try:
+            print(f"   Connecting to Milvus at {milvus_host}:{milvus_port}...")
             milvus_store = MilvusDocumentStore(
-                host=os.getenv("MILVUS_HOST", "localhost"),
-                port=int(os.getenv("MILVUS_PORT", "19530")),
+                host=milvus_host,
+                port=milvus_port,
             )
             if milvus_store.connect():
                 print("✅ Milvus connected")
@@ -158,7 +161,9 @@ async def init_rag_components():
                 print("⚠️  Milvus connection failed")
                 milvus_store = None
         except Exception as e:
+            import traceback
             print(f"⚠️  Milvus initialization failed: {e}")
+            print(f"   Traceback: {traceback.format_exc()}")
             milvus_store = None
         
         # Initialize document pipeline (uses its own PipelineConfig)
@@ -166,17 +171,49 @@ async def init_rag_components():
         pipeline_config = PipelineCfg()
         pipeline = DocumentPipeline(pipeline_config)
         
-        # Create DocumentManager (some components may be None but basic ops still work)
+        # Initialize embedder FIRST (needed for both DocumentManager and Retriever)
+        embedder = None
+        try:
+            from .rag.embedding import BGEM3Embedder
+            embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "BAAI/bge-m3")
+            embedding_device = os.getenv("RAG_EMBEDDING_DEVICE", "cpu")
+            embedder = BGEM3Embedder(
+                model_name=embedding_model,
+                device=embedding_device,
+            )
+            print(f"✅ Embedding model loaded: {embedding_model}")
+        except Exception as e:
+            print(f"⚠️  Embedding model not available: {e}")
+            print("   Document vectorization and search will fall back to BM25/keyword search")
+        
+        # Create DocumentManager WITH embedder
         doc_manager = DocumentManager(
             minio_client=minio_client,
             pg_store=pg_store,
             milvus_store=milvus_store,
             pipeline=pipeline,
-            embedder=None,  # Embedder is optional for basic operations
+            embedder=embedder,  # Now includes embedder for vectorization
         )
         
         # Register with RAG dependencies
         RAGDependencies.set_document_manager(doc_manager)
+        
+        # Initialize Retriever for search functionality
+        try:
+            from .rag.retrieval import HybridRetriever
+            
+            # Create retriever (reuse the same embedder)
+            retriever = HybridRetriever(
+                milvus_store=milvus_store,
+                pg_store=pg_store,
+                embedder=embedder,
+            )
+            RAGDependencies.set_retriever(retriever)
+            print("✅ RAG Retriever ready")
+            
+        except Exception as e:
+            print(f"⚠️  Retriever initialization failed: {e}")
+            print("   Search functionality will be unavailable")
         
         _rag_initialized = True
         print("✅ RAG DocumentManager ready")

@@ -21,13 +21,27 @@ export interface Document {
 }
 
 export interface Collection {
-  id: string;
+  id: string;  // 前端使用 id
+  collection_id: string;  // 后端返回 collection_id
   name: string;
   description?: string;
   document_count: number;
+  chunk_count?: number;
   created_at: string;
-  updated_at: string;
+  metadata?: Record<string, unknown>;
 }
+
+// 转换函数：将后端响应转换为前端格式
+const normalizeCollection = (c: Collection): Collection => ({
+  ...c,
+  id: c.collection_id || c.id,
+});
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const normalizeDocument = (d: any): Document => ({
+  ...d,
+  id: d.document_id || d.id,
+});
 
 export interface UploadResponse {
   document_id: string;
@@ -53,7 +67,7 @@ export const ragApi = {
   // Collections
   listCollections: async (): Promise<Collection[]> => {
     const response = await apiClient.get<{ collections: Collection[] }>('/api/rag/collections');
-    return response.data.collections;
+    return response.data.collections.map(normalizeCollection);
   },
 
   createCollection: async (name: string, description?: string): Promise<Collection> => {
@@ -61,7 +75,7 @@ export const ragApi = {
       name,
       description,
     });
-    return response.data;
+    return normalizeCollection(response.data);
   },
 
   deleteCollection: async (collectionId: string): Promise<void> => {
@@ -69,23 +83,28 @@ export const ragApi = {
   },
 
   // Documents
-  listDocuments: async (collectionId: string): Promise<Document[]> => {
+  listDocuments: async (collectionId?: string): Promise<Document[]> => {
+    const params = collectionId ? { collection_id: collectionId } : {};
     const response = await apiClient.get<{ documents: Document[] }>(
-      `/api/rag/collections/${collectionId}/documents`
+      '/api/rag/documents',
+      { params }
     );
-    return response.data.documents;
+    return response.data.documents.map(normalizeDocument);
   },
 
   uploadDocument: async (
-    collectionId: string,
+    collectionId: string | null,
     file: File,
     onProgress?: (progress: number) => void
   ): Promise<UploadResponse> => {
     const formData = new FormData();
     formData.append('file', file);
+    if (collectionId) {
+      formData.append('collection_id', collectionId);
+    }
 
     const response = await apiClient.post<UploadResponse>(
-      `/api/rag/collections/${collectionId}/documents`,
+      '/api/rag/documents/upload',
       formData,
       {
         headers: {
@@ -102,26 +121,30 @@ export const ragApi = {
     return response.data;
   },
 
-  getDocument: async (collectionId: string, documentId: string): Promise<Document> => {
+  getDocument: async (documentId: string): Promise<Document> => {
     const response = await apiClient.get<Document>(
-      `/api/rag/collections/${collectionId}/documents/${documentId}`
+      `/api/rag/documents/${documentId}`
     );
     return response.data;
   },
 
-  deleteDocument: async (collectionId: string, documentId: string): Promise<void> => {
-    await apiClient.delete(`/api/rag/collections/${collectionId}/documents/${documentId}`);
+  deleteDocument: async (_collectionId: string, documentId: string): Promise<void> => {
+    await apiClient.delete(`/api/rag/documents/${documentId}`);
   },
 
   // Search
   search: async (
-    collectionId: string,
     query: string,
+    collectionIds?: string[],
     limit = 10
   ): Promise<SearchResponse> => {
     const response = await apiClient.post<SearchResponse>(
-      `/api/rag/collections/${collectionId}/search`,
-      { query, limit }
+      '/api/rag/search',
+      { 
+        query, 
+        top_k: limit,
+        collection_ids: collectionIds,
+      }
     );
     return response.data;
   },

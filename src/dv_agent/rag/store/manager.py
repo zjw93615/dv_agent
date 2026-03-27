@@ -185,6 +185,126 @@ class DocumentManager:
         
         return True, ""
     
+    # ==================== 集合操作 ====================
+    
+    async def list_collections(
+        self,
+        tenant_id: str,
+    ) -> list:
+        """
+        列出集合
+        
+        Args:
+            tenant_id: 租户ID
+            
+        Returns:
+            集合列表
+        """
+        if self.pg:
+            return await self.pg.list_collections(tenant_id)
+        return []
+    
+    async def create_collection(
+        self,
+        tenant_id: str,
+        name: str,
+        description: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ):
+        """
+        创建集合
+        
+        Args:
+            tenant_id: 租户ID
+            name: 集合名称
+            description: 集合描述
+            metadata: 元数据
+            
+        Returns:
+            集合信息
+        """
+        import uuid
+        from datetime import datetime, timezone
+        from dataclasses import dataclass
+        
+        collection_id = str(uuid.uuid4())
+        
+        if self.pg:
+            return await self.pg.create_collection(
+                collection_id=collection_id,
+                tenant_id=tenant_id,
+                name=name,
+                description=description,
+                metadata=metadata,
+            )
+        
+        # 如果没有 pg_store，返回一个简单对象
+        @dataclass
+        class Collection:
+            collection_id: str
+            tenant_id: str
+            name: str
+            description: Optional[str]
+            document_count: int = 0
+            chunk_count: int = 0
+            created_at: datetime = None
+            metadata: dict = None
+        
+        return Collection(
+            collection_id=collection_id,
+            tenant_id=tenant_id,
+            name=name,
+            description=description,
+            created_at=datetime.now(timezone.utc),
+            metadata=metadata or {},
+        )
+    
+    async def get_collection(
+        self,
+        collection_id: str,
+        tenant_id: str,
+    ):
+        """
+        获取集合信息
+        
+        Args:
+            collection_id: 集合ID
+            tenant_id: 租户ID
+            
+        Returns:
+            集合信息
+        """
+        if self.pg:
+            return await self.pg.get_collection(collection_id, tenant_id)
+        return None
+    
+    async def delete_collection(
+        self,
+        collection_id: str,
+        tenant_id: str,
+        delete_documents: bool = False,
+    ) -> bool:
+        """
+        删除集合
+        
+        Args:
+            collection_id: 集合ID
+            tenant_id: 租户ID
+            delete_documents: 是否同时删除集合中的文档
+            
+        Returns:
+            是否成功
+        """
+        if delete_documents:
+            # 删除集合中的所有文档
+            docs = await self.list_documents(tenant_id, collection_id)
+            for doc in docs:
+                await self.delete_document(doc.get("doc_id") or doc.get("document_id"), tenant_id)
+        
+        if self.pg:
+            return await self.pg.delete_collection(collection_id, tenant_id)
+        return False
+    
     # ==================== 文档操作 ====================
     
     async def upload_document(
@@ -220,15 +340,24 @@ class DocumentManager:
         
         # 生成存储路径
         import hashlib
+        from urllib.parse import quote
+        
         content_hash = hashlib.sha256(content).hexdigest()
-        storage_path = f"{tenant_id}/{collection_id or 'default'}/{content_hash[:8]}_{filename}"
+        # 对文件名进行 URL 编码以支持中文
+        safe_filename = quote(filename, safe='')
+        storage_path = f"{tenant_id}/{collection_id or 'default'}/{content_hash[:8]}_{safe_filename}"
         
         # 上传到 MinIO
         if self.minio:
+            # 元数据中的中文也需要编码
             obj_info = self.minio.upload_bytes(
                 content,
                 storage_path,
-                metadata={"tenant_id": tenant_id, "filename": filename},
+                metadata={
+                    "tenant_id": tenant_id,
+                    "filename": quote(filename, safe=''),
+                    "original_filename": quote(filename, safe=''),
+                },
             )
             if not obj_info:
                 return {
@@ -325,9 +454,13 @@ class DocumentManager:
         if not doc:
             return False
         
-        # 删除向量
+        # 删除向量（忽略集合不存在的错误）
         if self.milvus:
-            self.milvus.delete_vectors_by_doc(doc_id)
+            try:
+                self.milvus.delete_vectors_by_doc(doc_id)
+            except Exception as e:
+                # Milvus 集合可能不存在，记录日志但继续执行
+                logger.warning(f"Failed to delete vectors for doc {doc_id}: {e}")
         
         # 删除块
         if self.pg:
@@ -339,7 +472,10 @@ class DocumentManager:
         
         # 删除文件
         if self.minio and doc.get("storage_path"):
-            self.minio.delete_object(doc["storage_path"])
+            try:
+                self.minio.delete_object(doc["storage_path"])
+            except Exception as e:
+                logger.warning(f"Failed to delete file for doc {doc_id}: {e}")
         
         return True
     
@@ -349,7 +485,7 @@ class DocumentManager:
         collection_id: Optional[str] = None,
         offset: int = 0,
         limit: int = 20,
-    ) -> list[dict]:
+    ) -> tuple[list, int]:
         """
         列出文档
         
@@ -360,13 +496,15 @@ class DocumentManager:
             limit: 限制数量
             
         Returns:
-            文档列表
+            (文档列表, 总数)
         """
         if self.pg:
-            return await self.pg.list_documents(
+            docs = await self.pg.list_documents(
                 tenant_id, collection_id, offset=offset, limit=limit
             )
-        return []
+            total = await self.pg.count_documents(tenant_id, collection_id)
+            return docs, total
+        return [], 0
     
     # ==================== 文档处理 ====================
     
@@ -389,40 +527,119 @@ class DocumentManager:
         """
         from .pg_document import DocumentStatus
         
+        # 辅助函数：发送 WebSocket 通知
+        async def notify_progress(stage: str, progress: float, message: str = ""):
+            try:
+                from ..websocket_notify import notify_document_progress
+                await notify_document_progress(
+                    tenant_id=tenant_id,
+                    document_id=doc_id,
+                    stage=stage,
+                    progress=progress,
+                    message=message,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to send WS notification: {e}")
+        
+        logger.info("=" * 60)
+        logger.info(f"[DOC-PROCESS] 开始处理文档")
+        logger.info(f"[DOC-PROCESS]   doc_id: {doc_id}")
+        logger.info(f"[DOC-PROCESS]   tenant_id: {tenant_id}")
+        logger.info(f"[DOC-PROCESS]   content_size: {len(content)} bytes")
+        logger.info("=" * 60)
+        
         try:
             # 更新状态为处理中
             if self.pg:
                 await self.pg.update_document_status(
                     doc_id, DocumentStatus.PROCESSING
                 )
+                logger.debug(f"[DOC-PROCESS] 状态已更新为 PROCESSING")
+            
+            await notify_progress("processing", 0.1, "开始处理文档")
             
             # 获取文档信息
             doc = await self.get_document(doc_id, tenant_id)
             if not doc:
+                logger.error(f"[DOC-PROCESS] 文档不存在: {doc_id}")
                 return False
             
-            # 文档处理流水线
+            logger.info(f"[DOC-PROCESS] 文档信息:")
+            logger.info(f"[DOC-PROCESS]   filename: {doc.get('filename')}")
+            logger.info(f"[DOC-PROCESS]   file_type: {doc.get('file_type')}")
+            logger.info(f"[DOC-PROCESS]   file_size: {doc.get('file_size')}")
+            logger.info(f"[DOC-PROCESS]   collection_id: {doc.get('collection_id')}")
+            
+            # 文档处理流水线（在线程池中运行同步代码）
+            await notify_progress("parsing", 0.2, "解析文档内容")
+            
             if self.pipeline:
-                result = self.pipeline.process(
-                    content=content,
-                    filename=doc["filename"],
-                    tenant_id=tenant_id,
-                    collection_id=doc.get("collection_id", ""),
+                logger.info(f"[DOC-PROCESS] [阶段1] 开始解析文档...")
+                logger.debug(f"[DOC-PROCESS]   pipeline: {type(self.pipeline).__name__}")
+                
+                import asyncio
+                import time
+                parse_start = time.time()
+                
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,  # 使用默认线程池
+                    lambda: self.pipeline.process(
+                        content=content,
+                        filename=doc["filename"],
+                        tenant_id=tenant_id,
+                        collection_id=doc.get("collection_id", ""),
+                    )
                 )
                 
+                parse_time = time.time() - parse_start
+                logger.info(f"[DOC-PROCESS] [阶段1] 文档解析完成，耗时: {parse_time:.2f}s")
+                logger.info(f"[DOC-PROCESS]   解析成功: {result.success}")
+                logger.info(f"[DOC-PROCESS]   chunks数量: {len(result.chunks) if result.chunks else 0}")
+                if result.errors:
+                    logger.warning(f"[DOC-PROCESS]   解析错误: {result.errors}")
+                
                 if not result.success:
+                    logger.error(f"[DOC-PROCESS] 文档解析失败: {result.errors}")
                     if self.pg:
                         await self.pg.update_document_status(
                             doc_id, DocumentStatus.FAILED,
                             error_message="; ".join(result.errors)
                         )
+                    # 发送错误通知
+                    try:
+                        from ..websocket_notify import notify_document_error
+                        await notify_document_error(
+                            tenant_id=tenant_id,
+                            document_id=doc_id,
+                            error="; ".join(result.errors),
+                            stage="parsing",
+                        )
+                    except Exception:
+                        pass
                     return False
                 
                 chunks = result.chunks
+                logger.info(f"[DOC-PROCESS] [阶段2] 文档分块完成")
+                logger.info(f"[DOC-PROCESS]   总块数: {len(chunks)}")
+                if chunks:
+                    # 显示前3个块的信息
+                    for i, chunk in enumerate(chunks[:3]):
+                        content_preview = chunk.content[:100].replace('\n', ' ') if chunk.content else ''
+                        logger.info(f"[DOC-PROCESS]   chunk[{i}]: index={chunk.index}, page={chunk.page_number}, len={len(chunk.content)}")
+                        logger.debug(f"[DOC-PROCESS]     preview: {content_preview}...")
+                    if len(chunks) > 3:
+                        logger.info(f"[DOC-PROCESS]   ... 还有 {len(chunks) - 3} 个块")
+                
+                await notify_progress("chunking", 0.5, f"文档分块完成，共 {len(chunks)} 块")
             else:
+                logger.error(f"[DOC-PROCESS] 没有可用的 pipeline")
                 return False
             
             # 存储块
+            await notify_progress("indexing", 0.6, "保存文档块")
+            
+            logger.info(f"[DOC-PROCESS] [阶段3] 存储文档块到数据库...")
             if self.pg and chunks:
                 chunk_data = [
                     {
@@ -433,21 +650,50 @@ class DocumentManager:
                     }
                     for c in chunks
                 ]
-                await self.pg.create_chunks(doc_id, chunk_data)
+                import time
+                chunk_start = time.time()
+                await self.pg.create_chunks(doc_id, chunk_data, tenant_id=tenant_id)
+                chunk_time = time.time() - chunk_start
+                logger.info(f"[DOC-PROCESS] [阶段3] 文档块存储完成，耗时: {chunk_time:.2f}s")
+                logger.info(f"[DOC-PROCESS]   存储块数: {len(chunk_data)}")
+            else:
+                logger.warning(f"[DOC-PROCESS] [阶段3] 跳过块存储 (pg={self.pg is not None}, chunks={len(chunks) if chunks else 0})")
             
             # 向量化
             if self.embedder and chunks:
+                await notify_progress("embedding", 0.7, "生成向量嵌入")
+                
+                logger.info(f"[DOC-PROCESS] [阶段4] 开始向量化...")
+                logger.info(f"[DOC-PROCESS]   embedder: {type(self.embedder).__name__}")
+                logger.info(f"[DOC-PROCESS]   待嵌入文本数: {len(chunks)}")
+                
+                import time
+                embed_start = time.time()
                 embeddings = self.embedder.embed_documents(
                     [c.content for c in chunks]
                 )
+                embed_time = time.time() - embed_start
+                
+                logger.info(f"[DOC-PROCESS] [阶段4] 向量嵌入完成，耗时: {embed_time:.2f}s")
+                logger.info(f"[DOC-PROCESS]   生成向量数: {len(embeddings)}")
+                if embeddings:
+                    first_emb = embeddings[0]
+                    logger.info(f"[DOC-PROCESS]   dense维度: {len(first_emb.dense_embedding) if first_emb.dense_embedding else 0}")
+                    logger.info(f"[DOC-PROCESS]   sparse存在: {first_emb.sparse_embedding is not None}")
                 
                 # 存储向量
                 if self.milvus:
+                    await notify_progress("embedding", 0.85, "存储向量索引")
+                    
+                    logger.info(f"[DOC-PROCESS] [阶段5] 存储向量到 Milvus...")
+                    
                     # 获取块ID（从数据库）
                     db_chunks = await self.pg.get_chunks(doc_id)
                     chunk_ids = [c["id"] for c in db_chunks]
                     doc_ids = [doc_id] * len(chunks)
                     tenant_ids = [tenant_id] * len(chunks)
+                    
+                    logger.info(f"[DOC-PROCESS]   chunk_ids: {chunk_ids[:3]}{'...' if len(chunk_ids) > 3 else ''}")
                     
                     dense_vectors = [e.dense_embedding for e in embeddings]
                     sparse_vectors = [
@@ -456,20 +702,55 @@ class DocumentManager:
                         for e in embeddings
                     ]
                     
+                    vector_start = time.time()
                     self.milvus.insert_vectors(
                         chunk_ids, doc_ids, dense_vectors, sparse_vectors, tenant_ids
                     )
+                    vector_time = time.time() - vector_start
+                    logger.info(f"[DOC-PROCESS] [阶段5] 向量存储完成，耗时: {vector_time:.2f}s")
+                else:
+                    logger.warning(f"[DOC-PROCESS] [阶段5] 跳过向量存储 (milvus not available)")
+            else:
+                logger.warning(f"[DOC-PROCESS] [阶段4] 跳过向量化 (embedder={self.embedder is not None}, chunks={len(chunks) if chunks else 0})")
             
             # 更新状态为完成
             if self.pg:
                 await self.pg.update_document_status(
                     doc_id, DocumentStatus.COMPLETED
                 )
+                logger.info(f"[DOC-PROCESS] 状态已更新为 COMPLETED")
+            
+            # 发送完成通知
+            try:
+                from ..websocket_notify import notify_document_completed
+                await notify_document_completed(
+                    tenant_id=tenant_id,
+                    document_id=doc_id,
+                    filename=doc.get("filename", ""),
+                    chunk_count=len(chunks) if chunks else 0,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to send completion notification: {e}")
+            
+            logger.info("=" * 60)
+            logger.info(f"[DOC-PROCESS] 文档处理完成!")
+            logger.info(f"[DOC-PROCESS]   doc_id: {doc_id}")
+            logger.info(f"[DOC-PROCESS]   filename: {doc.get('filename')}")
+            logger.info(f"[DOC-PROCESS]   总块数: {len(chunks) if chunks else 0}")
+            logger.info("=" * 60)
             
             return True
             
         except Exception as e:
-            logger.error(f"Document processing failed: {e}")
+            import traceback
+            logger.error("=" * 60)
+            logger.error(f"[DOC-PROCESS] 文档处理失败!")
+            logger.error(f"[DOC-PROCESS]   doc_id: {doc_id}")
+            logger.error(f"[DOC-PROCESS]   error: {e}")
+            logger.error(f"[DOC-PROCESS]   traceback:")
+            logger.error(traceback.format_exc())
+            logger.error("=" * 60)
+            
             if self.pg:
                 await self.pg.update_document_status(
                     doc_id, DocumentStatus.FAILED,
@@ -517,6 +798,7 @@ class DocumentManager:
     async def _run_worker(self):
         """运行任务处理 worker"""
         self._worker_running = True
+        logger.info("Document processing worker started")
         
         while True:
             try:
@@ -528,8 +810,11 @@ class DocumentManager:
                 except asyncio.TimeoutError:
                     # 队列空闲，退出 worker
                     if self._task_queue.empty():
+                        logger.info("Document processing worker idle, shutting down")
                         break
                     continue
+                
+                logger.info(f"Processing document: {task.doc_id}")
                 
                 # 更新任务状态
                 task.status = TaskStatus.PROCESSING
@@ -544,8 +829,10 @@ class DocumentManager:
                 task.completed_at = datetime.utcnow()
                 task.status = TaskStatus.COMPLETED if success else TaskStatus.FAILED
                 
+                logger.info(f"Document {task.doc_id} processing {'completed' if success else 'failed'}")
+                
             except Exception as e:
-                logger.error(f"Worker error: {e}")
+                logger.error(f"Worker error: {e}", exc_info=True)
                 if 'task' in locals():
                     task.status = TaskStatus.FAILED
                     task.error_message = str(e)

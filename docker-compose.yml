@@ -148,7 +148,8 @@ services:
       - memory
 
   milvus:
-    image: milvusdb/milvus:v2.3.4
+    # 升级到 v2.4.x 以支持稀疏向量 (SPARSE_FLOAT_VECTOR)
+    image: milvusdb/milvus:v2.4.5
     container_name: dv-agent-milvus
     ports:
       - "19530:19530"

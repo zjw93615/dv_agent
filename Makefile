@@ -10,33 +10,42 @@ help:
 	@echo "DV-Agent Development & Deployment Commands"
 	@echo ""
 	@echo "Development:"
-	@echo "  make install      - Install dependencies"
-	@echo "  make dev-setup    - Setup development environment"
-	@echo "  make dev-up       - Start development infrastructure (Redis)"
-	@echo "  make dev-up-full  - Start with Ollama and Redis Commander"
-	@echo "  make dev-down     - Stop development infrastructure"
-	@echo "  make dev-logs     - View development logs"
-	@echo "  make run          - Run the application locally"
-	@echo "  make test         - Run tests"
-	@echo "  make lint         - Run linter"
+	@echo "  make install        - Install core dependencies"
+	@echo "  make install-rag    - Install with RAG dependencies (FlagEmbedding)"
+	@echo "  make dev-setup      - Setup development environment"
+	@echo "  make dev-setup-rag  - Setup development with RAG support"
+	@echo "  make dev-up         - Start development infrastructure (Redis)"
+	@echo "  make dev-up-full    - Start with Ollama and Redis Commander"
+	@echo "  make dev-down       - Stop development infrastructure"
+	@echo "  make dev-logs       - View development logs"
+	@echo "  make run            - Run the application locally"
+	@echo "  make test           - Run tests"
+	@echo "  make lint           - Run linter"
 	@echo ""
 	@echo "Production:"
-	@echo "  make prod-build   - Build production Docker image"
-	@echo "  make prod-up      - Start production stack"
-	@echo "  make prod-up-full - Start with monitoring"
-	@echo "  make prod-down    - Stop production stack"
-	@echo "  make prod-logs    - View production logs"
+	@echo "  make prod-build     - Build production Docker image"
+	@echo "  make prod-up        - Start production stack"
+	@echo "  make prod-up-full   - Start with monitoring"
+	@echo "  make prod-down      - Stop production stack"
+	@echo "  make prod-logs      - View production logs"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make clean        - Clean up Docker resources"
-	@echo "  make ollama-pull  - Pull Ollama model"
+	@echo "  make clean          - Clean up Docker resources"
+	@echo "  make ollama-pull    - Pull Ollama model"
 
 # ==================== Development ====================
 
-# Install dependencies
+# Install dependencies (core only)
 install:
 	pip install -r requirements.txt
 	pip install -e .
+
+# Install with RAG dependencies (including FlagEmbedding)
+install-rag:
+	pip install -r requirements.txt
+	pip install -e ".[rag]"
+	@echo "RAG dependencies installed"
+	@echo "Note: First model load may take time to download BAAI/bge-m3"
 
 # Full development setup
 dev-setup: install
@@ -44,6 +53,13 @@ dev-setup: install
 	@if not exist .env copy .env.example .env
 	@echo "Development setup complete!"
 	@echo "Edit .env to configure your API keys"
+
+# Full development setup with RAG
+dev-setup-rag: install-rag
+	@echo "Copying environment template..."
+	@if not exist .env copy .env.example .env
+	@echo "RAG Development setup complete!"
+	@echo "Edit .env to configure your API keys and RAG settings"
 
 # Start development infrastructure (Redis only)
 dev-up:
